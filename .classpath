@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<classpath>
+	<classpathentry kind="lib" path="build/bin/bootstrap.jar"/>
+	<classpathentry kind="lib" path="build/bin/tomcat-juli.jar"/>
+	<classpathentry kind="lib" path="build/lib/annotations-api.jar"/>
+	<classpathentry kind="lib" path="build/lib/catalina-ant.jar"/>
+	<classpathentry kind="lib" path="build/lib/catalina-ha.jar"/>
+	<classpathentry kind="lib" path="build/lib/catalina-storeconfig.jar"/>
+	<classpathentry kind="lib" path="build/lib/catalina-tribes.jar"/>
+	<classpathentry kind="lib" path="build/lib/catalina.jar"/>
+	<classpathentry kind="lib" path="build/lib/ecj-4.6.1.jar"/>
+	<classpathentry kind="lib" path="build/lib/el-api.jar"/>
+	<classpathentry kind="lib" path="build/lib/jasper-el.jar"/>
+	<classpathentry kind="lib" path="build/lib/jasper.jar"/>
+	<classpathentry kind="lib" path="build/lib/jaspic-api.jar"/>
+	<classpathentry kind="lib" path="build/lib/jsp-api.jar"/>
+	<classpathentry kind="lib" path="build/lib/servlet-api.jar"/>
+	<classpathentry kind="lib" path="build/lib/tomcat-api.jar"/>
+	<classpathentry kind="lib" path="build/lib/tomcat-coyote.jar"/>
+	<classpathentry kind="lib" path="build/lib/tomcat-dbcp.jar"/>
+	<classpathentry kind="lib" path="build/lib/tomcat-i18n-es.jar"/>
+	<classpathentry kind="lib" path="build/lib/tomcat-i18n-fr.jar"/>
+	<classpathentry kind="lib" path="build/lib/tomcat-i18n-ja.jar"/>
+	<classpathentry kind="lib" path="build/lib/tomcat-jdbc.jar"/>
+	<classpathentry kind="lib" path="build/lib/tomcat-jni.jar"/>
+	<classpathentry kind="lib" path="build/lib/tomcat-util-scan.jar"/>
+	<classpathentry kind="lib" path="build/lib/tomcat-util.jar"/>
+	<classpathentry kind="lib" path="build/lib/tomcat-websocket.jar"/>
+	<classpathentry kind="lib" path="build/lib/websocket-api.jar"/>
+	<classpathentry kind="output" path="outbin"/>
+</classpath>
