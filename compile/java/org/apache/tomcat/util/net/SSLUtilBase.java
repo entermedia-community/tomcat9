@@ -19,9 +19,12 @@ package org.apache.tomcat.util.net;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URI;
+import java.security.DomainLoadStoreParameter;
 import java.security.KeyStore;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 
@@ -53,6 +56,9 @@ public abstract class SSLUtilBase implements SSLUtil {
         Set<String> implementedProtocols = getImplementedProtocols();
         List<String> enabledProtocols =
                 getEnabled("protocols", getLog(), true, configuredProtocols, implementedProtocols);
+        if (enabledProtocols.contains("SSLv3")) {
+            log.warn(sm.getString("jsse.ssl3"));
+        }
         this.enabledProtocols = enabledProtocols.toArray(new String[enabledProtocols.size()]);
 
         // Calculate the enabled ciphers
@@ -123,20 +129,37 @@ public abstract class SSLUtilBase implements SSLUtil {
             } else {
                 ks = KeyStore.getInstance(type, provider);
             }
-            if(!("PKCS11".equalsIgnoreCase(type) ||
-                    "".equalsIgnoreCase(path)) ||
-                    "NONE".equalsIgnoreCase(path)) {
-                istream = ConfigFileLoader.getInputStream(path);
-            }
+            if ("DKS".equalsIgnoreCase(type)) {
+                URI uri = ConfigFileLoader.getURI(path);
+                ks.load(new DomainLoadStoreParameter(uri, Collections.emptyMap()));
+            } else {
+                // Some key store types (e.g. hardware) expect the InputStream
+                // to be null
+                if(!("PKCS11".equalsIgnoreCase(type) ||
+                        "".equalsIgnoreCase(path)) ||
+                        "NONE".equalsIgnoreCase(path)) {
+                    istream = ConfigFileLoader.getInputStream(path);
+                }
 
-            char[] storePass = null;
-            if (pass != null && !"".equals(pass)) {
-                storePass = pass.toCharArray();
+                // The digester cannot differentiate between null and "".
+                // Unfortunately, some key stores behave differently with null
+                // and "".
+                // JKS key stores treat null and "" interchangeably.
+                // PKCS12 key stores (Java 8 onwards) don't return the cert if
+                // null is used.
+                // Key stores that do not use passwords expect null
+                // Therefore:
+                // - generally use null if pass is null or ""
+                // - for JKS or PKCS12 only use null if pass is null
+                //   (because JKS will auto-switch to PKCS12)
+                char[] storePass = null;
+                if (pass != null && (!"".equals(pass) ||
+                        "JKS".equalsIgnoreCase(type) || "PKCS12".equalsIgnoreCase(type))) {
+                    storePass = pass.toCharArray();
+                }
+                ks.load(istream, storePass);
             }
-            ks.load(istream, storePass);
         } catch (FileNotFoundException fnfe) {
-            log.error(sm.getString("jsse.keystore_load_failed", type, path,
-                    fnfe.getMessage()), fnfe);
             throw fnfe;
         } catch (IOException ioe) {
             // May be expected when working with a trust store

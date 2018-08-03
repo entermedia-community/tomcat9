@@ -173,7 +173,7 @@ import org.ietf.jgss.GSSCredential;
  * <p><strong>WARNING</strong> - There is a reported bug against the Netscape
  * provider code (com.netscape.jndi.ldap.LdapContextFactory) with respect to
  * successfully authenticated a non-existing user. The
- * report is here: http://bz.apache.org/bugzilla/show_bug.cgi?id=11210 .
+ * report is here: https://bz.apache.org/bugzilla/show_bug.cgi?id=11210 .
  * With luck, Netscape has updated their provider code and this is not an
  * issue. </p>
  *
@@ -232,12 +232,6 @@ public class JNDIRealm extends RealmBase {
      * the manner in which aliases should be dereferenced.
      */
     public static final String DEREF_ALIASES = "java.naming.ldap.derefAliases";
-
-
-    /**
-     * Descriptive information about this Realm implementation.
-     */
-    protected static final String name = "JNDIRealm";
 
 
     /**
@@ -421,6 +415,12 @@ public class JNDIRealm extends RealmBase {
      * to the directory. The default is 5000 (5 seconds).
      */
     protected String connectionTimeout = "5000";
+
+    /**
+     * The timeout, in milliseconds, to use when trying to read from a connection
+     * to the directory. The default is 5000 (5 seconds).
+     */
+    protected String readTimeout = "5000";
 
     /**
      * The sizeLimit (also known as the countLimit) to use when the realm is
@@ -1043,6 +1043,27 @@ public class JNDIRealm extends RealmBase {
 
     }
 
+    /**
+     * @return the read timeout.
+     */
+    public String getReadTimeout() {
+
+        return readTimeout;
+
+    }
+
+
+    /**
+     * Set the read timeout.
+     *
+     * @param timeout The new read timeout
+     */
+    public void setReadTimeout(String timeout) {
+
+        this.readTimeout = timeout;
+
+    }
+
 
     public long getSizeLimit() {
         return sizeLimit;
@@ -1180,8 +1201,7 @@ public class JNDIRealm extends RealmBase {
                         "jndiRealm.invalidHostnameVerifier",
                         hostNameVerifierClassName));
             }
-        } catch (ClassNotFoundException | SecurityException
-                | InstantiationException | IllegalAccessException e) {
+        } catch (ReflectiveOperationException | SecurityException e) {
             throw new IllegalArgumentException(sm.getString(
                     "jndiRealm.invalidHostnameVerifier",
                     hostNameVerifierClassName), e);
@@ -1225,10 +1245,9 @@ public class JNDIRealm extends RealmBase {
     }
 
     private Object constructInstance(String className)
-            throws ClassNotFoundException, InstantiationException,
-            IllegalAccessException {
+            throws ReflectiveOperationException {
         Class<?> clazz = Class.forName(className);
-        return clazz.newInstance();
+        return clazz.getConstructor().newInstance();
     }
 
     // ---------------------------------------------------------- Realm Methods
@@ -1265,11 +1284,22 @@ public class JNDIRealm extends RealmBase {
                 // Authenticate the specified username if possible
                 principal = authenticate(context, username, credentials);
 
-            } catch (NullPointerException | CommunicationException
-                    | ServiceUnavailableException e) {
-                /* BZ 42449 - Catch NPE - Kludge Sun's LDAP provider
-                   with broken SSL
-                */
+            } catch (NullPointerException | NamingException e) {
+                /*
+                 * BZ 61313
+                 * NamingException may or may not indicate an error that is
+                 * recoverable via fail over. Therefore a decision needs to be
+                 * made whether to fail over or not. Generally, attempting to
+                 * fail over when it is not appropriate is better than not
+                 * failing over when it is appropriate so the code always
+                 * attempts to fail over for NamingExceptions.
+                 */
+
+                /*
+                 * BZ 42449
+                 * Catch NPE - Kludge Sun's LDAP provider with broken SSL.
+                 */
+
                 // log the exception so we know it's there.
                 containerLog.info(sm.getString("jndiRealm.exception.retry"), e);
 
@@ -1355,7 +1385,7 @@ public class JNDIRealm extends RealmBase {
                             if (containerLog.isDebugEnabled()) {
                                 containerLog.debug("Found roles: " + roles.toString());
                             }
-                            return (new GenericPrincipal(username, credentials, roles));
+                            return new GenericPrincipal(username, credentials, roles);
                         }
                     } catch (InvalidNameException ine) {
                         // Log the problem for posterity
@@ -1454,7 +1484,7 @@ public class JNDIRealm extends RealmBase {
         User user = null;
 
         // Get attributes to retrieve from user entry
-        ArrayList<String> list = new ArrayList<>();
+        List<String> list = new ArrayList<>();
         if (userPassword != null)
             list.add(userPassword);
         if (userRoleName != null)
@@ -1940,7 +1970,7 @@ public class JNDIRealm extends RealmBase {
         if (results == null)
             return list;  // Should never happen, but just in case ...
 
-        HashMap<String, String> groupMap = new HashMap<>();
+        Map<String, String> groupMap = new HashMap<>();
         try {
             while (results.hasMore()) {
                 SearchResult result = results.next();
@@ -2168,17 +2198,6 @@ public class JNDIRealm extends RealmBase {
 
 
     /**
-     * @return a short name for this Realm implementation.
-     */
-    @Override
-    protected String getName() {
-
-        return name;
-
-    }
-
-
-    /**
      * Get the password for the specified user.
      * @param username The user name
      * @return the password associated with the given principal's user name.
@@ -2379,6 +2398,12 @@ public class JNDIRealm extends RealmBase {
 
     }
 
+    @Override
+    public boolean isAvailable() {
+        // Simple best effort check
+        return (context != null);
+    }
+
     private DirContext createDirContext(Hashtable<String, String> env) throws NamingException {
         if (useStartTls) {
             return createTlsDirContext(env);
@@ -2412,8 +2437,7 @@ public class JNDIRealm extends RealmBase {
                         "jndiRealm.invalidSslSocketFactory",
                         className));
             }
-        } catch (ClassNotFoundException | SecurityException
-                | InstantiationException | IllegalAccessException e) {
+        } catch (ReflectiveOperationException | SecurityException e) {
             throw new IllegalArgumentException(sm.getString(
                     "jndiRealm.invalidSslSocketFactory",
                     className), e);
@@ -2522,6 +2546,8 @@ public class JNDIRealm extends RealmBase {
             env.put(JNDIRealm.DEREF_ALIASES, derefAliases);
         if (connectionTimeout != null)
             env.put("com.sun.jndi.ldap.connect.timeout", connectionTimeout);
+        if (readTimeout != null)
+            env.put("com.sun.jndi.ldap.read.timeout", readTimeout);
 
         return env;
 
@@ -2600,7 +2626,7 @@ public class JNDIRealm extends RealmBase {
     protected String[] parseUserPatternString(String userPatternString) {
 
         if (userPatternString != null) {
-            ArrayList<String> pathList = new ArrayList<>();
+            List<String> pathList = new ArrayList<>();
             int startParenLoc = userPatternString.indexOf('(');
             if (startParenLoc == -1) {
                 // no parens here; return whole thing

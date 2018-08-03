@@ -92,12 +92,6 @@ public class JDBCRealm
 
 
     /**
-     * Descriptive information about this Realm implementation.
-     */
-    protected static final String name = "JDBCRealm";
-
-
-    /**
      * The PreparedStatement to use for authenticating users.
      */
     protected PreparedStatement preparedCredentials = null;
@@ -328,7 +322,7 @@ public class JDBCRealm
 
 
                 // Return the Principal (if any)
-                return (principal);
+                return principal;
 
             } catch (SQLException e) {
 
@@ -410,7 +404,13 @@ public class JDBCRealm
         ArrayList<String> roles = getRoles(username);
 
         // Create and return a suitable Principal for this user
-        return (new GenericPrincipal(username, credentials, roles));
+        return new GenericPrincipal(username, credentials, roles);
+    }
+
+
+    @Override
+    public boolean isAvailable() {
+        return (dbConnection != null);
     }
 
 
@@ -463,9 +463,8 @@ public class JDBCRealm
      * @return the prepared statement
      * @exception SQLException if a database error occurs
      */
-    protected PreparedStatement credentials(Connection dbConnection,
-                                            String username)
-        throws SQLException {
+    protected PreparedStatement credentials(Connection dbConnection, String username)
+            throws SQLException {
 
         if (preparedCredentials == null) {
             StringBuilder sb = new StringBuilder("SELECT ");
@@ -490,18 +489,7 @@ public class JDBCRealm
             preparedCredentials.setString(1, username);
         }
 
-        return (preparedCredentials);
-    }
-
-
-    /**
-     * @return a short name for this Realm implementation.
-     */
-    @Override
-    protected String getName() {
-
-        return (name);
-
+        return preparedCredentials;
     }
 
 
@@ -568,9 +556,9 @@ public class JDBCRealm
     @Override
     protected synchronized Principal getPrincipal(String username) {
 
-        return (new GenericPrincipal(username,
+        return new GenericPrincipal(username,
                                      getPassword(username),
-                                     getRoles(username)));
+                                     getRoles(username));
 
     }
 
@@ -644,13 +632,13 @@ public class JDBCRealm
 
         // Do nothing if there is a database connection already open
         if (dbConnection != null)
-            return (dbConnection);
+            return dbConnection;
 
         // Instantiate our database driver if necessary
         if (driver == null) {
             try {
                 Class<?> clazz = Class.forName(driverName);
-                driver = (Driver) clazz.newInstance();
+                driver = (Driver) clazz.getConstructor().newInstance();
             } catch (Throwable e) {
                 ExceptionUtils.handleThrowable(e);
                 throw new SQLException(e.getMessage(), e);
@@ -669,7 +657,7 @@ public class JDBCRealm
                     "jdbcRealm.open.invalidurl",driverName, connectionURL));
         }
         dbConnection.setAutoCommit(false);
-        return (dbConnection);
+        return dbConnection;
 
     }
 
@@ -683,9 +671,8 @@ public class JDBCRealm
      * @return the prepared statement
      * @exception SQLException if a database error occurs
      */
-    protected synchronized PreparedStatement roles(Connection dbConnection,
-            String username)
-        throws SQLException {
+    protected synchronized PreparedStatement roles(Connection dbConnection, String username)
+            throws SQLException {
 
         if (preparedRoles == null) {
             StringBuilder sb = new StringBuilder("SELECT ");
@@ -695,12 +682,11 @@ public class JDBCRealm
             sb.append(" WHERE ");
             sb.append(userNameCol);
             sb.append(" = ?");
-            preparedRoles =
-                dbConnection.prepareStatement(sb.toString());
+            preparedRoles = dbConnection.prepareStatement(sb.toString());
         }
 
         preparedRoles.setString(1, username);
-        return (preparedRoles);
+        return preparedRoles;
 
     }
 

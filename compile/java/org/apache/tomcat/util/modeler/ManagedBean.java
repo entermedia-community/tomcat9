@@ -38,6 +38,8 @@ import javax.management.ReflectionException;
 import javax.management.RuntimeOperationsException;
 import javax.management.ServiceNotFoundException;
 
+import org.apache.tomcat.util.buf.StringUtils;
+
 
 /**
  * <p>Internal configuration information for a managed bean (MBean)
@@ -207,7 +209,7 @@ public class ManagedBean implements java.io.Serializable {
      * by this descriptor.
      */
     public String getType() {
-        return (this.type);
+        return this.type;
     }
 
     public void setType(String type) {
@@ -316,7 +318,7 @@ public class ManagedBean implements java.io.Serializable {
             }
             try {
                 // Stupid - this will set the default minfo first....
-                mbean = (BaseModelMBean) clazz.newInstance();
+                mbean = (BaseModelMBean) clazz.getConstructor().newInstance();
             } catch (RuntimeOperationsException e) {
                 throw e;
             } catch (Exception e) {
@@ -432,8 +434,6 @@ public class ManagedBean implements java.io.Serializable {
             throw new AttributeNotFoundException(" Cannot find attribute " + aname + " for " + resource);
 
         String getMethod = attrInfo.getGetMethod();
-        if (getMethod == null)
-            throw new AttributeNotFoundException("Cannot find attribute " + aname + " get method name");
 
         Object object = null;
         NoSuchMethodException exception = null;
@@ -443,7 +443,7 @@ public class ManagedBean implements java.io.Serializable {
         } catch (NoSuchMethodException e) {
             exception = e;
         }
-        if (m== null && resource != null) {
+        if (m == null && resource != null) {
             try {
                 object = resource;
                 m = object.getClass().getMethod(getMethod, NO_ARGS_PARAM_SIG);
@@ -452,9 +452,10 @@ public class ManagedBean implements java.io.Serializable {
                 exception = e;
             }
         }
-        if (exception != null)
+        if (exception != null) {
             throw new ReflectionException(exception,
                                           "Cannot find getter method " + getMethod);
+        }
 
         return m;
     }
@@ -465,18 +466,15 @@ public class ManagedBean implements java.io.Serializable {
         Method m = null;
 
         AttributeInfo attrInfo = attributes.get(aname);
-        if (attrInfo == null)
+        if (attrInfo == null) {
             throw new AttributeNotFoundException(" Cannot find attribute " + aname);
+        }
 
         // Look up the actual operation to be used
         String setMethod = attrInfo.getSetMethod();
-        if (setMethod == null)
-            throw new AttributeNotFoundException("Cannot find attribute " + aname + " set method name");
-
         String argType=attrInfo.getType();
 
-        Class<?> signature[] =
-            new Class[] { BaseModelMBean.getAttributeClass( argType ) };
+        Class<?> signature[] = new Class[] { BaseModelMBean.getAttributeClass( argType ) };
 
         Object object = null;
         NoSuchMethodException exception = null;
@@ -495,10 +493,10 @@ public class ManagedBean implements java.io.Serializable {
                 exception = e;
             }
         }
-        if (exception != null)
+        if (exception != null) {
             throw new ReflectionException(exception,
-                                          "Cannot find setter method " + setMethod +
-                    " " + resource);
+                    "Cannot find setter method " + setMethod + " " + resource);
+        }
 
         return m;
     }
@@ -565,26 +563,17 @@ public class ManagedBean implements java.io.Serializable {
     private String createOperationKey(OperationInfo operation) {
         StringBuilder key = new StringBuilder(operation.getName());
         key.append('(');
-        for (ParameterInfo parameterInfo: operation.getSignature()) {
-            key.append(parameterInfo.getType());
-            // Note: A trailing ',' does not matter in this case
-            key.append(',');
-        }
+        StringUtils.join(operation.getSignature(), ',', (x) -> x.getType(), key);
         key.append(')');
 
         return key.toString();
     }
 
 
-    private String createOperationKey(String methodName,
-            String[] parameterTypes) {
+    private String createOperationKey(String methodName, String[] parameterTypes) {
         StringBuilder key = new StringBuilder(methodName);
         key.append('(');
-        for (String parameter: parameterTypes) {
-            key.append(parameter);
-            // Note: A trailing ',' does not matter in this case
-            key.append(',');
-        }
+        StringUtils.join(parameterTypes, ',', key);
         key.append(')');
 
         return key.toString();

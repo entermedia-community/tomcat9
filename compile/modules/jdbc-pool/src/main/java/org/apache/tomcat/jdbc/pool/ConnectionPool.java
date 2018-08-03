@@ -128,6 +128,17 @@ public class ConnectionPool {
 
     private AtomicLong poolVersion = new AtomicLong(Long.MIN_VALUE);
 
+    /**
+     * The counters for statistics of the pool.
+     */
+    private final AtomicLong borrowedCount = new AtomicLong(0);
+    private final AtomicLong returnedCount = new AtomicLong(0);
+    private final AtomicLong createdCount = new AtomicLong(0);
+    private final AtomicLong releasedCount = new AtomicLong(0);
+    private final AtomicLong reconnectedCount = new AtomicLong(0);
+    private final AtomicLong removeAbandonedCount = new AtomicLong(0);
+    private final AtomicLong releasedIdleCount = new AtomicLong(0);
+
     //===============================================================================
     //         PUBLIC METHODS
     //===============================================================================
@@ -150,7 +161,7 @@ public class ConnectionPool {
      * If a connection is not retrieved, the Future must be cancelled in order for the connection to be returned
      * to the pool.
      * @return a Future containing a reference to the connection or the future connection
-     * @throws SQLException Cannot use asyncronous connect
+     * @throws SQLException Cannot use asynchronous connect
      */
     public Future<Connection> getConnectionAsync() throws SQLException {
         try {
@@ -284,6 +295,7 @@ public class ConnectionPool {
         //fetch previously cached interceptor proxy - one per connection
         JdbcInterceptor handler = con.getHandler();
         if (handler==null) {
+            if (jmxPool != null) con.createMBean();
             //build the proxy handler
             handler = new ProxyConnection(this,con,getPoolProperties().isUseEquals());
             //set up the interceptor chain
@@ -291,7 +303,7 @@ public class ConnectionPool {
             for (int i=proxies.length-1; i>=0; i--) {
                 try {
                     //create a new instance
-                    JdbcInterceptor interceptor = proxies[i].getInterceptorClass().newInstance();
+                    JdbcInterceptor interceptor = proxies[i].getInterceptorClass().getConstructor().newInstance();
                     //configure properties
                     interceptor.setProperties(proxies[i].getProperties());
                     //setup the chain
@@ -316,7 +328,10 @@ public class ConnectionPool {
                 next = next.getNext();
             }
         }
-
+        // setup statement proxy
+        if (getPoolProperties().getUseStatementFacade()) {
+            handler = new StatementFacade(handler);
+        }
         try {
             getProxyConstructor(con.getXAConnection() != null);
             //create the proxy
@@ -401,7 +416,7 @@ public class ConnectionPool {
         PoolProperties.InterceptorDefinition[] proxies = getPoolProperties().getJdbcInterceptorsAsArray();
         for (int i=0; i<proxies.length; i++) {
             try {
-                JdbcInterceptor interceptor = proxies[i].getInterceptorClass().newInstance();
+                JdbcInterceptor interceptor = proxies[i].getInterceptorClass().getConstructor().newInstance();
                 interceptor.setProperties(proxies[i].getProperties());
                 interceptor.poolClosed(this);
             }catch (Exception x) {
@@ -448,7 +463,7 @@ public class ConnectionPool {
                 if (log.isDebugEnabled()) {
                     log.debug("Creating interceptor instance of class:"+proxies[i].getInterceptorClass());
                 }
-                JdbcInterceptor interceptor = proxies[i].getInterceptorClass().newInstance();
+                JdbcInterceptor interceptor = proxies[i].getInterceptorClass().getConstructor().newInstance();
                 interceptor.setProperties(proxies[i].getProperties());
                 interceptor.poolStarted(this);
             }catch (Exception x) {
@@ -534,7 +549,7 @@ public class ConnectionPool {
     /**
      * thread safe way to abandon a connection
      * signals a connection to be abandoned.
-     * this will disconnect the connection, and log the stack trace if logAbanded=true
+     * this will disconnect the connection, and log the stack trace if logAbandoned=true
      * @param con PooledConnection
      */
     protected void abandon(PooledConnection con) {
@@ -550,6 +565,7 @@ public class ConnectionPool {
                 jmxPool.notify(org.apache.tomcat.jdbc.pool.jmx.ConnectionPool.NOTIFY_ABANDON, trace);
             }
             //release the connection
+            removeAbandonedCount.incrementAndGet();
             release(con);
         } finally {
             con.unlock();
@@ -598,6 +614,7 @@ public class ConnectionPool {
                 size.addAndGet(-1);
                 con.setHandler(null);
             }
+            releasedCount.incrementAndGet();
         } finally {
             con.unlock();
         }
@@ -605,7 +622,10 @@ public class ConnectionPool {
         // we could have threads stuck in idle.poll(timeout) that will never be
         // notified
         if (waitcount.get() > 0) {
-            idle.offer(create(true));
+            if (!idle.offer(create(true))) {
+                log.warn("Failed to add a new connection to the pool after releasing a connection " +
+                        "when at least one thread was waiting for a connection.");
+            }
         }
     }
 
@@ -633,6 +653,7 @@ public class ConnectionPool {
             if (con!=null) {
                 //configure the connection and return it
                 PooledConnection result = borrowConnection(now, con, username, password);
+                borrowedCount.incrementAndGet();
                 if (result!=null) return result;
             }
 
@@ -725,6 +746,7 @@ public class ConnectionPool {
                 if (!busy.offer(con)) {
                     log.debug("Connection doesn't fit into busy array, connection will not be traceable.");
                 }
+                createdCount.incrementAndGet();
                 return con;
             } else {
                 //validation failed, make sure we disconnect
@@ -801,6 +823,7 @@ public class ConnectionPool {
             //the connection shouldn't have to poll again.
             try {
                 con.reconnect();
+                reconnectedCount.incrementAndGet();
                 int validationMode = getPoolProperties().isTestOnConnect() || getPoolProperties().getInitSQL()!=null ?
                     PooledConnection.VALIDATE_INIT :
                     PooledConnection.VALIDATE_BORROW;
@@ -896,6 +919,7 @@ public class ConnectionPool {
 
         if (con != null) {
             try {
+                returnedCount.incrementAndGet();
                 con.lock();
                 if (con.isSuspect()) {
                     if (poolProperties.isLogAbandoned() && log.isInfoEnabled()) {
@@ -910,6 +934,7 @@ public class ConnectionPool {
                 if (busy.remove(con)) {
 
                     if (!shouldClose(con,PooledConnection.VALIDATE_RETURN)) {
+                        con.clearWarnings();
                         con.setStackTrace(null);
                         con.setTimestamp(System.currentTimeMillis());
                         if (((idle.size()>=poolProperties.getMaxIdle()) && !poolProperties.isPoolSweeperEnabled()) || (!idle.offer(con))) {
@@ -1015,6 +1040,7 @@ public class ConnectionPool {
                         continue;
                     long time = con.getTimestamp();
                     if (shouldReleaseIdle(now, con, time)) {
+                        releasedIdleCount.incrementAndGet();
                         release(con);
                         idle.remove(con);
                         setToNull = true;
@@ -1177,6 +1203,75 @@ public class ConnectionPool {
     }
 
     /**
+     * The total number of connections borrowed from this pool.
+     * @return the borrowed connection count
+     */
+    public long getBorrowedCount() {
+        return borrowedCount.get();
+    }
+
+    /**
+     * The total number of connections returned to this pool.
+     * @return the returned connection count
+     */
+    public long getReturnedCount() {
+        return returnedCount.get();
+    }
+
+    /**
+     * The total number of connections created by this pool.
+     * @return the created connection count
+     */
+    public long getCreatedCount() {
+        return createdCount.get();
+    }
+
+    /**
+     * The total number of connections released from this pool.
+     * @return the released connection count
+     */
+    public long getReleasedCount() {
+        return releasedCount.get();
+    }
+
+    /**
+     * The total number of connections reconnected by this pool.
+     * @return the reconnected connection count
+     */
+    public long getReconnectedCount() {
+        return reconnectedCount.get();
+    }
+
+    /**
+     * The total number of connections released by remove abandoned.
+     * @return the PoolCleaner removed abandoned connection count
+     */
+    public long getRemoveAbandonedCount() {
+        return removeAbandonedCount.get();
+    }
+
+    /**
+     * The total number of connections released by eviction.
+     * @return the PoolCleaner evicted idle connection count
+     */
+    public long getReleasedIdleCount() {
+        return releasedIdleCount.get();
+    }
+
+    /**
+     * reset the statistics of this pool.
+     */
+    public void resetStats() {
+        borrowedCount.set(0);
+        returnedCount.set(0);
+        createdCount.set(0);
+        releasedCount.set(0);
+        reconnectedCount.set(0);
+        removeAbandonedCount.set(0);
+        releasedIdleCount.set(0);
+    }
+
+    /**
      * Tread safe wrapper around a future for the regular queue
      * This one retrieves the pooled connection object
      * and performs the initialization according to
@@ -1291,7 +1386,7 @@ public class ConnectionPool {
 
 
     private static volatile Timer poolCleanTimer = null;
-    private static HashSet<PoolCleaner> cleaners = new HashSet<>();
+    private static Set<PoolCleaner> cleaners = new HashSet<>();
 
     private static synchronized void registerCleaner(PoolCleaner cleaner) {
         unregisterCleaner(cleaner);

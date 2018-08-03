@@ -232,7 +232,8 @@ public class JspCompilationContext {
             }
         }
         if (jspCompiler == null) {
-            throw new IllegalStateException(Localizer.getMessage("jsp.error.compiler"));
+            throw new IllegalStateException(Localizer.getMessage("jsp.error.compiler.config",
+                    options.getCompilerClassName(), options.getCompiler()));
         }
         jspCompiler.init(this, jsw);
         return jspCompiler;
@@ -241,19 +242,13 @@ public class JspCompilationContext {
     protected Compiler createCompiler(String className) {
         Compiler compiler = null;
         try {
-            compiler = (Compiler) Class.forName(className).newInstance();
-        } catch (InstantiationException e) {
-            log.warn(Localizer.getMessage("jsp.error.compiler"), e);
-        } catch (IllegalAccessException e) {
-            log.warn(Localizer.getMessage("jsp.error.compiler"), e);
-        } catch (NoClassDefFoundError e) {
+            compiler = (Compiler) Class.forName(className).getConstructor().newInstance();
+        } catch (NoClassDefFoundError | ClassNotFoundException e) {
             if (log.isDebugEnabled()) {
                 log.debug(Localizer.getMessage("jsp.error.compiler"), e);
             }
-        } catch (ClassNotFoundException e) {
-            if (log.isDebugEnabled()) {
-                log.debug(Localizer.getMessage("jsp.error.compiler"), e);
-            }
+        } catch (ReflectiveOperationException e) {
+            log.warn(Localizer.getMessage("jsp.error.compiler"), e);
         }
         return compiler;
     }
@@ -450,7 +445,7 @@ public class JspCompilationContext {
     }
 
     /**
-     * Package name for the generated class is make up of the base package
+     * Package name for the generated class is made up of the base package
      * name, which is user settable, and the derived package name.  The
      * derived package name directly mirrors the file hierarchy of the JSP page.
      * @return the package name
@@ -483,11 +478,19 @@ public class JspCompilationContext {
     }
 
     /**
-     * The package name into which the servlet class is generated.
-     * @param servletPackageName The package name to use
+     * @return The base package name into which all servlet and associated code
+     *         is generated
      */
-    public void setServletPackageName(String servletPackageName) {
-        this.basePackageName = servletPackageName;
+    public String getBasePackageName() {
+        return basePackageName;
+    }
+
+    /**
+     * The package name into which the servlet class is generated.
+     * @param basePackageName The package name to use
+     */
+    public void setBasePackageName(String basePackageName) {
+        this.basePackageName = basePackageName;
     }
 
     /**

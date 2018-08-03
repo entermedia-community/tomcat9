@@ -205,6 +205,17 @@
         default is <code>true</code>.</p>
       </attribute>
 
+      <attribute name="forkJoinCommonPoolProtection" required="false">
+        <p>Enables protection so the threads created for
+        <code>ForkJoinPool.commonPool()</code> do not result in a memory leak.
+        The protection is enabled by setting the
+        <code>java.util.concurrent.ForkJoinPool.common.threadFactory</code>
+        system property. If this property is set when Tomcat starts, Tomcat will
+        not over-ride it even if this protection is explicitly enabled. The
+        default is <code>true</code>.  This protection is disabled if running on
+        Java 9 onwards since the leak has been fixed for Java 9 onwards.</p>
+      </attribute>
+
       <attribute name="gcDaemonProtection" required="false">
         <p>Enables protection so that calls to
         <code>sun.misc.GC.requestLatency(long)</code> triggered by a web
@@ -288,9 +299,11 @@
     <p>The <strong>Security Lifecycle Listener</strong> performs a number of
     security checks when Tomcat starts and prevents Tomcat from starting if they
     fail. The listener is not enabled by default. To enabled it uncomment the
-    listener in $CATALINA_BASE/conf/server.xml. If the operating system supports
-    umask then the line in $CATALINA_HOME/bin/catalina.sh that obtains the umask
-    also needs to be uncommented.</p>
+    listener in $CATALINA_BASE/conf/server.xml. For Tomcat versions before 9.0.7,
+    if the operating system supports umask then the line in
+    $CATALINA_HOME/bin/catalina.sh that obtains the umask also needs to be
+    uncommented. For Tomcat 9.0.7 and later, the umask is automatically
+    passed-into Tomcat.</p>
 
     <p>This listener must only be nested within <a href="server.html">Server</a>
     elements.</p>
@@ -340,7 +353,7 @@
         used.</p>
       </attribute>
 
-      <attribute name="storeRegsitry" required="false">
+      <attribute name="storeRegistry" required="false">
         <p>The URL of the configuration file that configures how the
         <code>IStoreConfig</code> is to save the configuration. If not specified
         the built in resource

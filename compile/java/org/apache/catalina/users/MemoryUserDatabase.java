@@ -143,11 +143,9 @@ public class MemoryUserDatabase implements UserDatabase {
      */
     @Override
     public Iterator<Group> getGroups() {
-
         synchronized (groups) {
-            return (groups.values().iterator());
+            return groups.values().iterator();
         }
-
     }
 
 
@@ -156,9 +154,7 @@ public class MemoryUserDatabase implements UserDatabase {
      */
     @Override
     public String getId() {
-
-        return (this.id);
-
+        return this.id;
     }
 
 
@@ -166,9 +162,7 @@ public class MemoryUserDatabase implements UserDatabase {
      * @return the relative or absolute pathname to the persistent storage file.
      */
     public String getPathname() {
-
-        return (this.pathname);
-
+        return this.pathname;
     }
 
 
@@ -190,9 +184,7 @@ public class MemoryUserDatabase implements UserDatabase {
      * @return the readonly status of the user database
      */
     public boolean getReadonly() {
-
-        return (this.readonly);
-
+        return this.readonly;
     }
 
 
@@ -213,11 +205,9 @@ public class MemoryUserDatabase implements UserDatabase {
      */
     @Override
     public Iterator<Role> getRoles() {
-
         synchronized (roles) {
-            return (roles.values().iterator());
+            return roles.values().iterator();
         }
-
     }
 
 
@@ -226,11 +216,9 @@ public class MemoryUserDatabase implements UserDatabase {
      */
     @Override
     public Iterator<User> getUsers() {
-
         synchronized (users) {
-            return (users.values().iterator());
+            return users.values().iterator();
         }
-
     }
 
 
@@ -266,7 +254,6 @@ public class MemoryUserDatabase implements UserDatabase {
      */
     @Override
     public Group createGroup(String groupname, String description) {
-
         if (groupname == null || groupname.length() == 0) {
             String msg = sm.getString("memoryUserDatabase.nullGroup");
             log.warn(msg);
@@ -277,8 +264,7 @@ public class MemoryUserDatabase implements UserDatabase {
         synchronized (groups) {
             groups.put(group.getGroupname(), group);
         }
-        return (group);
-
+        return group;
     }
 
 
@@ -290,7 +276,6 @@ public class MemoryUserDatabase implements UserDatabase {
      */
     @Override
     public Role createRole(String rolename, String description) {
-
         if (rolename == null || rolename.length() == 0) {
             String msg = sm.getString("memoryUserDatabase.nullRole");
             log.warn(msg);
@@ -301,8 +286,7 @@ public class MemoryUserDatabase implements UserDatabase {
         synchronized (roles) {
             roles.put(role.getRolename(), role);
         }
-        return (role);
-
+        return role;
     }
 
 
@@ -327,7 +311,7 @@ public class MemoryUserDatabase implements UserDatabase {
         synchronized (users) {
             users.put(user.getUsername(), user);
         }
-        return (user);
+        return user;
     }
 
 
@@ -416,7 +400,6 @@ public class MemoryUserDatabase implements UserDatabase {
                     digester.parse(is);
                 } catch (IOException ioe) {
                     log.error(sm.getString("memoryUserDatabase.fileNotFound", pathName));
-                    return;
                 }
             }
         }
@@ -521,16 +504,12 @@ public class MemoryUserDatabase implements UserDatabase {
         // Write out contents to a temporary file
         File fileNew = new File(pathnameNew);
         if (!fileNew.isAbsolute()) {
-            fileNew =
-                new File(System.getProperty(Globals.CATALINA_BASE_PROP), pathnameNew);
+            fileNew = new File(System.getProperty(Globals.CATALINA_BASE_PROP), pathnameNew);
         }
-        PrintWriter writer = null;
-        try {
 
-            // Configure our PrintWriter
-            FileOutputStream fos = new FileOutputStream(fileNew);
-            OutputStreamWriter osw = new OutputStreamWriter(fos, "UTF8");
-            writer = new PrintWriter(osw);
+        try (FileOutputStream fos = new FileOutputStream(fileNew);
+                OutputStreamWriter osw = new OutputStreamWriter(fos, "UTF8");
+                PrintWriter writer = new PrintWriter(osw)) {
 
             // Print the file prolog
             writer.println("<?xml version='1.0' encoding='utf-8'?>");
@@ -562,51 +541,46 @@ public class MemoryUserDatabase implements UserDatabase {
 
             // Check for errors that occurred while printing
             if (writer.checkError()) {
-                writer.close();
-                fileNew.delete();
-                throw new IOException
-                    (sm.getString("memoryUserDatabase.writeException",
-                                  fileNew.getAbsolutePath()));
+                throw new IOException(sm.getString("memoryUserDatabase.writeException",
+                        fileNew.getAbsolutePath()));
             }
-            writer.close();
         } catch (IOException e) {
-            if (writer != null) {
-                writer.close();
+            if (fileNew.exists() && !fileNew.delete()) {
+                log.warn(sm.getString("memoryUserDatabase.fileDelete", fileNew));
             }
-            fileNew.delete();
             throw e;
         }
 
         // Perform the required renames to permanently save this file
         File fileOld = new File(pathnameOld);
         if (!fileOld.isAbsolute()) {
-            fileOld =
-                new File(System.getProperty(Globals.CATALINA_BASE_PROP), pathnameOld);
+            fileOld = new File(System.getProperty(Globals.CATALINA_BASE_PROP), pathnameOld);
         }
-        fileOld.delete();
+        if (fileOld.exists() && !fileOld.delete()) {
+            throw new IOException(sm.getString("memoryUserDatabase.fileDelete", fileOld));
+        }
         File fileOrig = new File(pathname);
         if (!fileOrig.isAbsolute()) {
-            fileOrig =
-                new File(System.getProperty(Globals.CATALINA_BASE_PROP), pathname);
+            fileOrig = new File(System.getProperty(Globals.CATALINA_BASE_PROP), pathname);
         }
         if (fileOrig.exists()) {
-            fileOld.delete();
             if (!fileOrig.renameTo(fileOld)) {
-                throw new IOException
-                    (sm.getString("memoryUserDatabase.renameOld",
-                                  fileOld.getAbsolutePath()));
+                throw new IOException(sm.getString("memoryUserDatabase.renameOld",
+                        fileOld.getAbsolutePath()));
             }
         }
         if (!fileNew.renameTo(fileOrig)) {
             if (fileOld.exists()) {
-                fileOld.renameTo(fileOrig);
+                if (!fileOld.renameTo(fileOrig)) {
+                    log.warn(sm.getString("memoryUserDatabase.restoreOrig", fileOld));
+                }
             }
-            throw new IOException
-                (sm.getString("memoryUserDatabase.renameNew",
-                              fileOrig.getAbsolutePath()));
+            throw new IOException(sm.getString("memoryUserDatabase.renameNew",
+                    fileOrig.getAbsolutePath()));
         }
-        fileOld.delete();
-
+        if (fileOld.exists() && !fileOld.delete()) {
+            throw new IOException(sm.getString("memoryUserDatabase.fileDelete", fileOld));
+        }
     }
 
 
@@ -615,7 +589,6 @@ public class MemoryUserDatabase implements UserDatabase {
      */
     @Override
     public String toString() {
-
         StringBuilder sb = new StringBuilder("MemoryUserDatabase[id=");
         sb.append(this.id);
         sb.append(",pathname=");
@@ -627,7 +600,7 @@ public class MemoryUserDatabase implements UserDatabase {
         sb.append(",userCount=");
         sb.append(this.users.size());
         sb.append("]");
-        return (sb.toString());
+        return sb.toString();
     }
 }
 
@@ -671,7 +644,7 @@ class MemoryGroupCreationFactory extends AbstractObjectCreationFactory {
                 }
             }
         }
-        return (group);
+        return group;
     }
 
     private final MemoryUserDatabase database;
@@ -695,7 +668,7 @@ class MemoryRoleCreationFactory extends AbstractObjectCreationFactory {
         }
         String description = attributes.getValue("description");
         Role role = database.createRole(rolename, description);
-        return (role);
+        return role;
     }
 
     private final MemoryUserDatabase database;
@@ -765,7 +738,7 @@ class MemoryUserCreationFactory extends AbstractObjectCreationFactory {
                 }
             }
         }
-        return (user);
+        return user;
     }
 
     private final MemoryUserDatabase database;

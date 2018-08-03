@@ -17,6 +17,7 @@
 package org.apache.catalina.core;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Collection;
 
@@ -352,6 +353,20 @@ public class TestApplicationContextGetRequestDispatcher extends TomcatBaseTest {
     }
 
 
+    @Test
+    public void testGetRequestDispatcher47() throws Exception {
+        doTestGetRequestDispatcher(true, "/prefix/start", null, "aa+bb",
+                "/prefix/aa+bb", TargetServlet.OK);
+    }
+
+
+    @Test
+    public void testGetRequestDispatcher48() throws Exception {
+        doTestGetRequestDispatcher(false, "/prefix/start", null, "aa+bb",
+                "/prefix/aa+bb", TargetServlet.OK);
+    }
+
+
     private void doTestGetRequestDispatcher(boolean useEncodedDispatchPaths, String startPath,
             String startQueryString, String dispatchPath, String targetPath, String expectedBody)
             throws Exception {
@@ -369,7 +384,8 @@ public class TestApplicationContextGetRequestDispatcher extends TomcatBaseTest {
 
         // Add a target servlet to dispatch to
         Tomcat.addServlet(ctx, "target", new TargetServlet());
-        ctx.addServletMappingDecoded(UDecoder.URLDecode(targetPath, "UTF-8"), "target");
+        ctx.addServletMappingDecoded(
+                UDecoder.URLDecode(targetPath, StandardCharsets.UTF_8), "target");
 
         if (useAsync) {
             Wrapper w = Tomcat.addServlet(
@@ -378,7 +394,7 @@ public class TestApplicationContextGetRequestDispatcher extends TomcatBaseTest {
         } else {
             Tomcat.addServlet(ctx, "rd", new DispatcherServlet(dispatchPath));
         }
-        ctx.addServletMappingDecoded(UDecoder.URLDecode(startPath, "UTF-8"), "rd");
+        ctx.addServletMappingDecoded(UDecoder.URLDecode(startPath, StandardCharsets.UTF_8), "rd");
 
         tomcat.start();
 
@@ -486,7 +502,7 @@ public class TestApplicationContextGetRequestDispatcher extends TomcatBaseTest {
                 int lastSlash = target.lastIndexOf('/');
                 target = target.substring(0, lastSlash + 1);
                 if (encodePath) {
-                    target = URLEncoder.DEFAULT.encode(target, "UTF-8");
+                    target = URLEncoder.DEFAULT.encode(target, StandardCharsets.UTF_8);
                 }
                 target += dispatchPath;
             }

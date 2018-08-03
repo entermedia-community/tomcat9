@@ -25,14 +25,18 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Pattern;
 
 import org.apache.coyote.Adapter;
+import org.apache.coyote.CompressionConfig;
 import org.apache.coyote.Processor;
 import org.apache.coyote.Request;
+import org.apache.coyote.Response;
 import org.apache.coyote.UpgradeProtocol;
 import org.apache.coyote.UpgradeToken;
 import org.apache.coyote.http11.upgrade.InternalHttpUpgradeHandler;
 import org.apache.coyote.http11.upgrade.UpgradeProcessorInternal;
+import org.apache.tomcat.util.buf.StringUtils;
 import org.apache.tomcat.util.net.SocketWrapperBase;
 
 public class Http2Protocol implements UpgradeProtocol {
@@ -44,7 +48,7 @@ public class Http2Protocol implements UpgradeProtocol {
     static final long DEFAULT_MAX_CONCURRENT_STREAMS = 200;
     // Maximum amount of streams which can be concurrently executed over
     // a single connection
-    static final int DEFAULT_MAX_CONCURRENT_STREAM_EXECUTION = 200;
+    static final int DEFAULT_MAX_CONCURRENT_STREAM_EXECUTION = 20;
     // This default is defined by the HTTP/2 specification
     static final int DEFAULT_INITIAL_WINDOW_SIZE = (1 << 16) - 1;
 
@@ -64,12 +68,14 @@ public class Http2Protocol implements UpgradeProtocol {
     // Limits
     private Set<String> allowedTrailerHeaders =
             Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
-    private int maxCookieCount = Constants.DEFAULT_MAX_COOKIE_COUNT;
     private int maxHeaderCount = Constants.DEFAULT_MAX_HEADER_COUNT;
     private int maxHeaderSize = Constants.DEFAULT_MAX_HEADER_SIZE;
     private int maxTrailerCount = Constants.DEFAULT_MAX_TRAILER_COUNT;
     private int maxTrailerSize = Constants.DEFAULT_MAX_TRAILER_SIZE;
-
+    private boolean initiatePingDisabled = false;
+    private boolean useSendfile = true;
+    // Compression
+    private final CompressionConfig compressionConfig = new CompressionConfig();
 
     @Override
     public String getHttpUpgradeName(boolean isSSLEnabled) {
@@ -93,29 +99,17 @@ public class Http2Protocol implements UpgradeProtocol {
     @Override
     public Processor getProcessor(SocketWrapperBase<?> socketWrapper, Adapter adapter) {
         UpgradeProcessorInternal processor = new UpgradeProcessorInternal(socketWrapper,
-                new UpgradeToken(getInternalUpgradeHandler(adapter, null), null, null));
+                new UpgradeToken(getInternalUpgradeHandler(socketWrapper, adapter, null), null, null));
         return processor;
     }
 
 
     @Override
-    public InternalHttpUpgradeHandler getInternalUpgradeHandler(Adapter adapter,
-            Request coyoteRequest) {
-        Http2UpgradeHandler result = new Http2UpgradeHandler(adapter, coyoteRequest);
-
-        result.setReadTimeout(getReadTimeout());
-        result.setKeepAliveTimeout(getKeepAliveTimeout());
-        result.setWriteTimeout(getWriteTimeout());
-        result.setMaxConcurrentStreams(getMaxConcurrentStreams());
-        result.setMaxConcurrentStreamExecution(getMaxConcurrentStreamExecution());
-        result.setInitialWindowSize(getInitialWindowSize());
-        result.setAllowedTrailerHeaders(allowedTrailerHeaders);
-        result.setMaxCookieCount(getMaxCookieCount());
-        result.setMaxHeaderCount(getMaxHeaderCount());
-        result.setMaxHeaderSize(getMaxHeaderSize());
-        result.setMaxTrailerCount(getMaxTrailerCount());
-        result.setMaxTrailerSize(getMaxTrailerSize());
-        return result;
+    public InternalHttpUpgradeHandler getInternalUpgradeHandler(SocketWrapperBase<?> socketWrapper,
+            Adapter adapter, Request coyoteRequest) {
+        return socketWrapper.hasAsyncIO()
+                ? new Http2AsyncUpgradeHandler(this, adapter, coyoteRequest)
+                : new Http2UpgradeHandler(this, adapter, coyoteRequest);
     }
 
 
@@ -201,6 +195,16 @@ public class Http2Protocol implements UpgradeProtocol {
     }
 
 
+    public boolean getUseSendfile() {
+        return useSendfile;
+    }
+
+
+    public void setUseSendfile(boolean useSendfile) {
+        this.useSendfile = useSendfile;
+    }
+
+
     public void setAllowedTrailerHeaders(String commaSeparatedHeaders) {
         // Jump through some hoops so we don't end up with an empty set while
         // doing updates.
@@ -226,27 +230,12 @@ public class Http2Protocol implements UpgradeProtocol {
         // sync is unnecessary.
         List<String> copy = new ArrayList<>(allowedTrailerHeaders.size());
         copy.addAll(allowedTrailerHeaders);
-        StringBuilder result = new StringBuilder();
-        boolean first = true;
-        for (String header : copy) {
-            if (first) {
-                first = false;
-            } else {
-                result.append(',');
-            }
-            result.append(header);
-        }
-        return result.toString();
+        return StringUtils.join(copy);
     }
 
 
-    public void setMaxCookieCount(int maxCookieCount) {
-        this.maxCookieCount = maxCookieCount;
-    }
-
-
-    public int getMaxCookieCount() {
-        return maxCookieCount;
+    boolean isTrailerHeaderAllowed(String headerName) {
+        return allowedTrailerHeaders.contains(headerName);
     }
 
 
@@ -287,5 +276,61 @@ public class Http2Protocol implements UpgradeProtocol {
 
     public int getMaxTrailerSize() {
         return maxTrailerSize;
+    }
+
+
+    public void setInitiatePingDisabled(boolean initiatePingDisabled) {
+        this.initiatePingDisabled = initiatePingDisabled;
+    }
+
+
+    public boolean getInitiatePingDisabled() {
+        return initiatePingDisabled;
+    }
+
+
+    public void setCompression(String compression) {
+        compressionConfig.setCompression(compression);
+    }
+    public String getCompression() {
+        return compressionConfig.getCompression();
+    }
+    protected int getCompressionLevel() {
+        return compressionConfig.getCompressionLevel();
+    }
+
+
+    public String getNoCompressionUserAgents() {
+        return compressionConfig.getNoCompressionUserAgents();
+    }
+    protected Pattern getNoCompressionUserAgentsPattern() {
+        return compressionConfig.getNoCompressionUserAgentsPattern();
+    }
+    public void setNoCompressionUserAgents(String noCompressionUserAgents) {
+        compressionConfig.setNoCompressionUserAgents(noCompressionUserAgents);
+    }
+
+
+    public String getCompressibleMimeType() {
+        return compressionConfig.getCompressibleMimeType();
+    }
+    public void setCompressibleMimeType(String valueS) {
+        compressionConfig.setCompressibleMimeType(valueS);
+    }
+    public String[] getCompressibleMimeTypes() {
+        return compressionConfig.getCompressibleMimeTypes();
+    }
+
+
+    public int getCompressionMinSize() {
+        return compressionConfig.getCompressionMinSize();
+    }
+    public void setCompressionMinSize(int compressionMinSize) {
+        compressionConfig.setCompressionMinSize(compressionMinSize);
+    }
+
+
+    public boolean useCompression(Request request, Response response) {
+        return compressionConfig.useCompression(request, response);
     }
 }

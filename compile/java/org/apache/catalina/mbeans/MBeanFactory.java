@@ -18,6 +18,7 @@
 package org.apache.catalina.mbeans;
 
 import java.io.File;
+import java.net.InetAddress;
 
 import javax.management.MBeanServer;
 import javax.management.ObjectName;
@@ -27,6 +28,7 @@ import org.apache.catalina.Context;
 import org.apache.catalina.Engine;
 import org.apache.catalina.Host;
 import org.apache.catalina.JmxEnabled;
+import org.apache.catalina.Realm;
 import org.apache.catalina.Server;
 import org.apache.catalina.Service;
 import org.apache.catalina.Valve;
@@ -203,6 +205,7 @@ public class MBeanFactory {
         return createConnector(parent, address, port, true, false);
     }
 
+
     /**
      * Create a new DataSource Realm.
      *
@@ -230,19 +233,27 @@ public class MBeanFactory {
         realm.setUserTable(userTable);
 
         // Add the new instance to its parent component
+        return addRealmToParent(parent, realm);
+    }
+
+
+    private String addRealmToParent(String parent, Realm realm) throws Exception {
         ObjectName pname = new ObjectName(parent);
         Container container = getParentContainerFromParent(pname);
         // Add the new instance to its parent component
         container.setRealm(realm);
         // Return the corresponding MBean name
-        ObjectName oname = realm.getObjectName();
+        ObjectName oname = null;
+        if (realm instanceof JmxEnabled) {
+            oname = ((JmxEnabled) realm).getObjectName();
+        }
         if (oname != null) {
-            return (oname.toString());
+            return oname.toString();
         } else {
             return null;
         }
-
     }
+
 
     /**
      * Create a new HttpConnector
@@ -258,6 +269,7 @@ public class MBeanFactory {
             throws Exception {
         return createConnector(parent, address, port, false, false);
     }
+
 
     /**
      * Create a new Connector
@@ -292,7 +304,7 @@ public class MBeanFactory {
         // Return the corresponding MBean name
         ObjectName coname = retobj.getObjectName();
 
-        return (coname.toString());
+        return coname.toString();
     }
 
 
@@ -310,6 +322,7 @@ public class MBeanFactory {
         throws Exception {
         return createConnector(parent, address, port, false, true);
     }
+
 
     /**
      * Create a new JDBC Realm.
@@ -335,19 +348,7 @@ public class MBeanFactory {
         realm.setConnectionURL(connectionURL);
 
         // Add the new instance to its parent component
-        ObjectName pname = new ObjectName(parent);
-        Container container = getParentContainerFromParent(pname);
-        // Add the new instance to its parent component
-        container.setRealm(realm);
-        // Return the corresponding MBean name
-        ObjectName oname = realm.getObjectName();
-
-        if (oname != null) {
-            return (oname.toString());
-        } else {
-            return null;
-        }
-
+        return addRealmToParent(parent, realm);
     }
 
 
@@ -359,27 +360,13 @@ public class MBeanFactory {
      *
      * @exception Exception if an MBean cannot be created or registered
      */
-    public String createJNDIRealm(String parent)
-        throws Exception {
+    public String createJNDIRealm(String parent) throws Exception {
 
          // Create a new JNDIRealm instance
         JNDIRealm realm = new JNDIRealm();
 
         // Add the new instance to its parent component
-        ObjectName pname = new ObjectName(parent);
-        Container container = getParentContainerFromParent(pname);
-        // Add the new instance to its parent component
-        container.setRealm(realm);
-        // Return the corresponding MBean name
-        ObjectName oname = realm.getObjectName();
-
-        if (oname != null) {
-            return (oname.toString());
-        } else {
-            return null;
-        }
-
-
+        return addRealmToParent(parent, realm);
     }
 
 
@@ -391,25 +378,13 @@ public class MBeanFactory {
      *
      * @exception Exception if an MBean cannot be created or registered
      */
-    public String createMemoryRealm(String parent)
-        throws Exception {
+    public String createMemoryRealm(String parent) throws Exception {
 
          // Create a new MemoryRealm instance
         MemoryRealm realm = new MemoryRealm();
 
         // Add the new instance to its parent component
-        ObjectName pname = new ObjectName(parent);
-        Container container = getParentContainerFromParent(pname);
-        // Add the new instance to its parent component
-        container.setRealm(realm);
-        // Return the corresponding MBean name
-        ObjectName oname = realm.getObjectName();
-        if (oname != null) {
-            return (oname.toString());
-        } else {
-            return null;
-        }
-
+        return addRealmToParent(parent, realm);
     }
 
 
@@ -541,7 +516,7 @@ public class MBeanFactory {
         engine.addChild(host);
 
         // Return the corresponding MBean name
-        return (host.getObjectName().toString());
+        return host.getObjectName().toString();
 
     }
 
@@ -602,7 +577,7 @@ public class MBeanFactory {
         }
         ObjectName oname = manager.getObjectName();
         if (oname != null) {
-            return (oname.toString());
+            return oname.toString();
         } else {
             return null;
         }
@@ -628,21 +603,7 @@ public class MBeanFactory {
         realm.setResourceName(resourceName);
 
         // Add the new instance to its parent component
-        ObjectName pname = new ObjectName(parent);
-        Container container = getParentContainerFromParent(pname);
-        // Add the new instance to its parent component
-        container.setRealm(realm);
-        // Return the corresponding MBean name
-        ObjectName oname = realm.getObjectName();
-        // FIXME getObjectName() returns null
-        //ObjectName oname =
-        //    MBeanUtils.createObjectName(pname.getDomain(), realm);
-        if (oname != null) {
-            return (oname.toString());
-        } else {
-            return null;
-        }
-
+        return addRealmToParent(parent, realm);
     }
 
 
@@ -671,7 +632,7 @@ public class MBeanFactory {
             throw new IllegalArgumentException();
         }
 
-        Valve valve = (Valve) Class.forName(className).newInstance();
+        Valve valve = (Valve) Class.forName(className).getConstructor().newInstance();
 
         container.getPipeline().addValve(valve);
 
@@ -707,7 +668,7 @@ public class MBeanFactory {
         //ObjectName oname = loader.getObjectName();
         ObjectName oname =
             MBeanUtils.createObjectName(pname.getDomain(), loader);
-        return (oname.toString());
+        return oname.toString();
 
     }
 
@@ -725,29 +686,35 @@ public class MBeanFactory {
         ObjectName oname = new ObjectName(name);
         Service service = getService(oname);
         String port = oname.getKeyProperty("port");
-        //String address = oname.getKeyProperty("address");
+        String address = oname.getKeyProperty("address");
+        if (address != null) {
+            address = ObjectName.unquote(address);
+        }
 
         Connector conns[] = service.findConnectors();
 
         for (int i = 0; i < conns.length; i++) {
-            String connAddress = String.valueOf(conns[i].getProperty("address"));
+            String connAddress = null;
+            Object objConnAddress = conns[i].getProperty("address");
+            if (objConnAddress != null) {
+                connAddress = ((InetAddress) objConnAddress).getHostAddress();
+            }
             String connPort = ""+conns[i].getPort();
 
-            // if (((address.equals("null")) &&
-            if ((connAddress==null) && port.equals(connPort)) {
-                service.removeConnector(conns[i]);
-                conns[i].destroy();
-                break;
-            }
-            // } else if (address.equals(connAddress))
-            if (port.equals(connPort)) {
-                // Remove this component from its parent component
+            if (address == null) {
+                // Don't combine this with outer if or we could get an NPE in
+                // 'else if' below
+                if (connAddress == null && port.equals(connPort)) {
+                    service.removeConnector(conns[i]);
+                    conns[i].destroy();
+                    break;
+                }
+            } else if (address.equals(connAddress) && port.equals(connPort)) {
                 service.removeConnector(conns[i]);
                 conns[i].destroy();
                 break;
             }
         }
-
     }
 
 
@@ -792,7 +759,7 @@ public class MBeanFactory {
             host.removeChild(context);
             if(context instanceof StandardContext)
             try {
-                ((StandardContext)context).destroy();
+                context.destroy();
             } catch (Exception e) {
                 log.warn("Error during context [" + context.getName() + "] destroy ", e);
            }

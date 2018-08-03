@@ -53,7 +53,7 @@ import org.xml.sax.SAXException;
  * Scans for and loads Tag Library Descriptors contained in a web application.
  */
 public class TldScanner {
-    private static final Log log = LogFactory.getLog(TldScanner.class);
+    private final Log log = LogFactory.getLog(TldScanner.class); // must not be static
     private static final String MSG = "org.apache.jasper.servlet.TldScanner";
     private static final String TLD_EXT = ".tld";
     private static final String WEB_INF = "/WEB-INF/";
@@ -98,14 +98,12 @@ public class TldScanner {
      * @throws SAXException if there was a problem parsing a TLD
      */
     public void scan() throws IOException, SAXException {
-
-	//Cburkey: Takes too long to scan the entire WEB-INF folder    
-	return;
-    	
-//        scanPlatform();
-//        scanJspConfig();
-//        scanResourcePaths(WEB_INF);
-//        scanJars();
+        scanPlatform();
+        scanJspConfig();
+        //https://docs.oracle.com/javaee/1.4/tutorial/doc/
+        //cburkey: Slows down the startup since /WEB-INF/data might be huge
+        scanResourcePaths(WEB_INF + "tags/");
+        scanJars();
     }
 
     /**

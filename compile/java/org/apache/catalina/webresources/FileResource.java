@@ -47,7 +47,7 @@ public class FileResource extends AbstractResource {
         boolean isEBCDIC = false;
         try {
             String encoding = System.getProperty("file.encoding");
-            if (encoding.indexOf("EBCDIC") != -1) {
+            if (encoding.contains("EBCDIC")) {
                 isEBCDIC = true;
             }
         } catch (SecurityException e) {
@@ -227,7 +227,7 @@ public class FileResource extends AbstractResource {
             // Workaround for certain files on platforms that use
             // EBCDIC encoding, when they are read through FileInputStream.
             // See commit message of rev.303915 for original details
-            // http://svn.apache.org/viewvc?view=revision&revision=303915
+            // https://svn.apache.org/viewvc?view=revision&revision=303915
             String str = new String(result);
             try {
                 result = str.getBytes(StandardCharsets.UTF_8);

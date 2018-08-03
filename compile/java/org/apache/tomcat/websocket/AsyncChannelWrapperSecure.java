@@ -48,12 +48,12 @@ import org.apache.tomcat.util.res.StringManager;
  */
 public class AsyncChannelWrapperSecure implements AsyncChannelWrapper {
 
-    private static final Log log =
+    private final Log log =
             LogFactory.getLog(AsyncChannelWrapperSecure.class);
     private static final StringManager sm =
             StringManager.getManager(AsyncChannelWrapperSecure.class);
 
-    private static final ByteBuffer DUMMY = ByteBuffer.allocate(8192);
+    private static final ByteBuffer DUMMY = ByteBuffer.allocate(16921);
     private final AsynchronousSocketChannel socketChannel;
     private final SSLEngine sslEngine;
     private final ByteBuffer socketReadBuffer;
@@ -236,6 +236,7 @@ public class AsyncChannelWrapperSecure implements AsyncChannelWrapper {
                             "asyncChannelWrapperSecure.wrongStateWrite")));
                 }
             } catch (Exception e) {
+                writing.set(false);
                 future.fail(e);
             }
         }
@@ -267,8 +268,7 @@ public class AsyncChannelWrapperSecure implements AsyncChannelWrapper {
                         Future<Integer> f = socketChannel.read(socketReadBuffer);
                         Integer socketRead = f.get();
                         if (socketRead.intValue() == -1) {
-                            throw new EOFException(sm.getString(
-                                    "asyncChannelWrapperSecure.eof"));
+                            throw new EOFException(sm.getString("asyncChannelWrapperSecure.eof"));
                         }
                     }
 
@@ -276,8 +276,7 @@ public class AsyncChannelWrapperSecure implements AsyncChannelWrapper {
 
                     if (socketReadBuffer.hasRemaining()) {
                         // Decrypt the data in the buffer
-                        SSLEngineResult r =
-                                sslEngine.unwrap(socketReadBuffer, dest);
+                        SSLEngineResult r = sslEngine.unwrap(socketReadBuffer, dest);
                         read += r.bytesProduced();
                         Status s = r.getStatus();
 
@@ -334,7 +333,9 @@ public class AsyncChannelWrapperSecure implements AsyncChannelWrapper {
                     future.fail(new IllegalStateException(sm.getString(
                             "asyncChannelWrapperSecure.wrongStateRead")));
                 }
-            } catch (Exception e) {
+            } catch (RuntimeException | ReadBufferOverflowException | SSLException | EOFException |
+                    ExecutionException | InterruptedException e) {
+                reading.set(false);
                 future.fail(e);
             }
         }
@@ -409,9 +410,9 @@ public class AsyncChannelWrapperSecure implements AsyncChannelWrapper {
                         }
                     }
                 }
-            } catch (SSLException | InterruptedException |
-                    ExecutionException e) {
+            } catch (Exception e) {
                 hFuture.fail(e);
+                return;
             }
 
             hFuture.complete(null);

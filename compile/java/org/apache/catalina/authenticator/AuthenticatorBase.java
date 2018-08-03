@@ -19,13 +19,12 @@ package org.apache.catalina.authenticator;
 import java.io.IOException;
 import java.security.Principal;
 import java.security.cert.X509Certificate;
-import java.text.SimpleDateFormat;
-import java.util.Date;
-import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 import javax.security.auth.Subject;
+import javax.security.auth.callback.CallbackHandler;
 import javax.security.auth.message.AuthException;
 import javax.security.auth.message.AuthStatus;
 import javax.security.auth.message.MessageInfo;
@@ -48,8 +47,8 @@ import org.apache.catalina.LifecycleException;
 import org.apache.catalina.Manager;
 import org.apache.catalina.Realm;
 import org.apache.catalina.Session;
+import org.apache.catalina.TomcatPrincipal;
 import org.apache.catalina.Valve;
-import org.apache.catalina.Wrapper;
 import org.apache.catalina.authenticator.jaspic.CallbackHandlerImpl;
 import org.apache.catalina.authenticator.jaspic.MessageInfoImpl;
 import org.apache.catalina.connector.Request;
@@ -61,6 +60,7 @@ import org.apache.catalina.valves.ValveBase;
 import org.apache.coyote.ActionCode;
 import org.apache.juli.logging.Log;
 import org.apache.juli.logging.LogFactory;
+import org.apache.tomcat.util.ExceptionUtils;
 import org.apache.tomcat.util.descriptor.web.LoginConfig;
 import org.apache.tomcat.util.descriptor.web.SecurityConstraint;
 import org.apache.tomcat.util.http.FastHttpDateFormat;
@@ -87,13 +87,12 @@ import org.apache.tomcat.util.res.StringManager;
 public abstract class AuthenticatorBase extends ValveBase
         implements Authenticator, RegistrationListener {
 
-    private static final Log log = LogFactory.getLog(AuthenticatorBase.class);
+    private final Log log = LogFactory.getLog(AuthenticatorBase.class); // must not be static
 
     /**
      * "Expires" header always set to Date(1), so generate once only
      */
-    private static final String DATE_ONE =
-            (new SimpleDateFormat(FastHttpDateFormat.RFC1123_DATE, Locale.US)).format(new Date(1));
+    private static final String DATE_ONE = FastHttpDateFormat.formatDate(1);
 
     /**
      * The string manager for this package.
@@ -208,6 +207,13 @@ public abstract class AuthenticatorBase extends ValveBase
      */
     protected String secureRandomProvider = null;
 
+    /**
+     * The name of the JASPIC callback handler class. If none is specified the
+     * default {@link org.apache.catalina.authenticator.jaspic.CallbackHandlerImpl}
+     * will be used.
+     */
+    protected String jaspicCallbackHandlerClass = null;
+
     protected SessionIdGeneratorBase sessionIdGenerator = null;
 
     /**
@@ -217,7 +223,7 @@ public abstract class AuthenticatorBase extends ValveBase
     protected SingleSignOn sso = null;
 
     private volatile String jaspicAppContextID = null;
-    private volatile AuthConfigProvider jaspicProvider = null;
+    private volatile Optional<AuthConfigProvider> jaspicProvider = null;
 
 
     // ------------------------------------------------------------- Properties
@@ -404,6 +410,25 @@ public abstract class AuthenticatorBase extends ValveBase
         this.secureRandomProvider = secureRandomProvider;
     }
 
+    /**
+     * Return the JASPIC callback handler class name
+     *
+     * @return The name of the JASPIC callback handler
+     */
+    public String getJaspicCallbackHandlerClass() {
+        return jaspicCallbackHandlerClass;
+    }
+
+    /**
+     * Set the JASPIC callback handler class name
+     *
+     * @param jaspicCallbackHandlerClass
+     *            The new JASPIC callback handler class name
+     */
+    public void setJaspicCallbackHandlerClass(String jaspicCallbackHandlerClass) {
+        this.jaspicCallbackHandlerClass = jaspicCallbackHandlerClass;
+    }
+
     // --------------------------------------------------------- Public Methods
 
     /**
@@ -448,13 +473,6 @@ public abstract class AuthenticatorBase extends ValveBase
         }
 
         boolean authRequired = isContinuationRequired(request);
-
-        // The Servlet may specify security constraints through annotations.
-        // Ensure that they have been processed before constraints are checked
-        Wrapper wrapper = request.getMappingData().wrapper;
-        if (wrapper != null) {
-            wrapper.servletSecurityAnnotationScan();
-        }
 
         Realm realm = this.context.getRealm();
         // Is this request URI subject to a security constraint?
@@ -637,8 +655,9 @@ public abstract class AuthenticatorBase extends ValveBase
                 new MessageInfoImpl(request.getRequest(), response.getResponse(), authMandatory);
 
         try {
+            CallbackHandler callbackHandler = createCallbackHandler();
             ServerAuthConfig serverAuthConfig = jaspicProvider.getServerAuthConfig(
-                    "HttpServlet", jaspicAppContextID, CallbackHandlerImpl.getInstance());
+                    "HttpServlet", jaspicAppContextID, callbackHandler);
             String authContextID = serverAuthConfig.getAuthContextID(jaspicState.messageInfo);
             jaspicState.serverAuthContext = serverAuthConfig.getAuthContext(authContextID, null, null);
         } catch (AuthException e) {
@@ -648,6 +667,32 @@ public abstract class AuthenticatorBase extends ValveBase
         }
 
         return jaspicState;
+    }
+
+    private CallbackHandler createCallbackHandler() {
+        CallbackHandler callbackHandler = null;
+        if (jaspicCallbackHandlerClass == null) {
+            callbackHandler = CallbackHandlerImpl.getInstance();
+        } else {
+            Class<?> clazz = null;
+            try {
+                clazz = Class.forName(jaspicCallbackHandlerClass, true,
+                        Thread.currentThread().getContextClassLoader());
+            } catch (ClassNotFoundException e) {
+                // Proceed with the retry below
+            }
+
+            try {
+                if (clazz == null) {
+                    clazz = Class.forName(jaspicCallbackHandlerClass);
+                }
+                callbackHandler = (CallbackHandler)clazz.getConstructor().newInstance();
+            } catch (ReflectiveOperationException e) {
+                throw new SecurityException(e);
+            }
+        }
+
+        return callbackHandler;
     }
 
 
@@ -1107,6 +1152,16 @@ public abstract class AuthenticatorBase extends ValveBase
             }
         }
 
+        Principal p = request.getPrincipal();
+        if (p instanceof TomcatPrincipal) {
+            try {
+                ((TomcatPrincipal) p).logout();
+            } catch (Throwable t) {
+                ExceptionUtils.handleThrowable(t);
+                log.debug(sm.getString("authenticator.tomcatPrincipalLogoutFail"), t);
+            }
+        }
+
         register(request, request.getResponse(), null, null, null, null);
     }
 
@@ -1174,24 +1229,31 @@ public abstract class AuthenticatorBase extends ValveBase
 
 
     private AuthConfigProvider getJaspicProvider() {
-        AuthConfigProvider provider = jaspicProvider;
+        Optional<AuthConfigProvider> provider = jaspicProvider;
         if (provider == null) {
-            AuthConfigFactory factory = AuthConfigFactory.getFactory();
-            provider = factory.getConfigProvider("HttpServlet", jaspicAppContextID, this);
-            if (provider != null) {
-                jaspicProvider = provider;
-            }
+            provider = findJaspicProvider();
         }
+        return provider.orElse(null);
+    }
+
+
+    private Optional<AuthConfigProvider> findJaspicProvider() {
+        AuthConfigFactory factory = AuthConfigFactory.getFactory();
+        Optional<AuthConfigProvider> provider;
+        if (factory == null) {
+            provider = Optional.empty();
+        } else {
+            provider = Optional.ofNullable(
+                    factory.getConfigProvider("HttpServlet", jaspicAppContextID, this));
+        }
+        jaspicProvider = provider;
         return provider;
     }
 
 
     @Override
     public void notify(String layer, String appContext) {
-        AuthConfigFactory factory = AuthConfigFactory.getFactory();
-        AuthConfigProvider provider = factory.getConfigProvider("HttpServlet", jaspicAppContextID,
-                this);
-        jaspicProvider = provider;
+        findJaspicProvider();
     }
 
 

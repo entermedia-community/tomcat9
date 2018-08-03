@@ -163,7 +163,7 @@ public class WebappServiceLoader<T> {
             throws IOException {
         try (InputStream is = url.openStream();
             InputStreamReader in = new InputStreamReader(is, StandardCharsets.UTF_8);
-            BufferedReader reader = new BufferedReader(in);) {
+            BufferedReader reader = new BufferedReader(in)) {
             String line;
             while ((line = reader.readLine()) != null) {
                 int i = line.indexOf('#');
@@ -186,9 +186,8 @@ public class WebappServiceLoader<T> {
         for (String serviceClass : servicesFound) {
             try {
                 Class<?> clazz = Class.forName(serviceClass, true, loader);
-                services.add(serviceType.cast(clazz.newInstance()));
-            } catch (ClassNotFoundException | InstantiationException |
-                    IllegalAccessException | ClassCastException e) {
+                services.add(serviceType.cast(clazz.getConstructor().newInstance()));
+            } catch (ReflectiveOperationException | ClassCastException e) {
                 throw new IOException(e);
             }
         }

@@ -118,8 +118,8 @@ import org.apache.juli.logging.LogFactory;
  * Maybe I'll do a state diagram :)
  * </p>
  * <h2>State Diagrams</h2>
- * <a href="http://people.apache.org/~fhanik/tribes/docs/leader-election-initiate-election.jpg">Initiate an election</a><br><br>
- * <a href="http://people.apache.org/~fhanik/tribes/docs/leader-election-message-arrives.jpg">Receive an election message</a><br><br>
+ * <a href="https://people.apache.org/~fhanik/tribes/docs/leader-election-initiate-election.jpg">Initiate an election</a><br><br>
+ * <a href="https://people.apache.org/~fhanik/tribes/docs/leader-election-message-arrives.jpg">Receive an election message</a><br><br>
  *
  * @version 1.0
  *
@@ -195,7 +195,7 @@ public class NonBlockingCoordinator extends ChannelInterceptorBase {
         synchronized (electionMutex) {
             Member local = getLocalMember(false);
             Member[] others = membership.getMembers();
-            fireInterceptorEvent(new CoordinationEvent(CoordinationEvent.EVT_START_ELECT,this,"Election initated"));
+            fireInterceptorEvent(new CoordinationEvent(CoordinationEvent.EVT_START_ELECT,this,"Election initiated"));
             if ( others.length == 0 ) {
                 this.viewId = new UniqueId(UUIDGenerator.randomUUID(false));
                 this.view = new Membership(local,AbsoluteOrder.comp, true);

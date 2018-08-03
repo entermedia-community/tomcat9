@@ -20,11 +20,10 @@ package org.apache.catalina.core;
 import java.io.IOException;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
-import java.net.MalformedURLException;
-import java.net.URL;
 import java.net.URLConnection;
 import java.sql.DriverManager;
 import java.util.StringTokenizer;
+import java.util.concurrent.ForkJoinPool;
 
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
@@ -33,6 +32,7 @@ import javax.xml.parsers.ParserConfigurationException;
 import org.apache.catalina.Lifecycle;
 import org.apache.catalina.LifecycleEvent;
 import org.apache.catalina.LifecycleListener;
+import org.apache.catalina.startup.SafeForkJoinWorkerThreadFactory;
 import org.apache.juli.logging.Log;
 import org.apache.juli.logging.LogFactory;
 import org.apache.tomcat.util.ExceptionUtils;
@@ -63,6 +63,8 @@ public class JreMemoryLeakPreventionListener implements LifecycleListener {
     private static final StringManager sm =
         StringManager.getManager(Constants.Package);
 
+    private static final String FORK_JOIN_POOL_THREAD_FACTORY_PROPERTY =
+            "java.util.concurrent.ForkJoinPool.common.threadFactory";
     /**
      * Protect against the memory leak caused when the first call to
      * <code>java.awt.Toolkit.getDefaultToolkit()</code> is triggered
@@ -158,6 +160,21 @@ public class JreMemoryLeakPreventionListener implements LifecycleListener {
     }
     public void setDriverManagerProtection(boolean driverManagerProtection) {
         this.driverManagerProtection = driverManagerProtection;
+    }
+
+    /**
+     * {@link ForkJoinPool#commonPool()} creates a thread pool that, by default,
+     * creates threads that retain references to the thread context class
+     * loader.
+     *
+     * @see "http://bugs.java.com/bugdatabase/view_bug.do?bug_id=JDK-8172726"
+     */
+    private boolean forkJoinCommonPoolProtection = true;
+    public boolean getForkJoinCommonPoolProtection() {
+        return forkJoinCommonPoolProtection;
+    }
+    public void setForkJoinCommonPoolProtection(boolean forkJoinCommonPoolProtection) {
+        this.forkJoinCommonPoolProtection = forkJoinCommonPoolProtection;
     }
 
     /**
@@ -270,22 +287,17 @@ public class JreMemoryLeakPreventionListener implements LifecycleListener {
                  * - javax.xml.bind.JAXBContext.newInstance()
                  *
                  * https://bugs.openjdk.java.net/browse/JDK-8163449
+                 *
+                 * Java 9 onwards disables caching for JAR URLConnections
+                 * Java 8 and earlier disables caching for all URLConnections
                  */
 
                 // Set the default URL caching policy to not to cache
                 if (urlCacheProtection) {
                     try {
-                        // Doesn't matter that this JAR doesn't exist - just as
-                        // long as the URL is well-formed
-                        URL url = new URL("jar:file://dummy.jar!/");
-                        URLConnection uConn = url.openConnection();
-                        uConn.setDefaultUseCaches(false);
-                    } catch (MalformedURLException e) {
-                        log.error(sm.getString(
-                                "jreLeakListener.jarUrlConnCacheFail"), e);
+                        JreCompat.getInstance().disableCachingForJarUrlConnections();
                     } catch (IOException e) {
-                        log.error(sm.getString(
-                                "jreLeakListener.jarUrlConnCacheFail"), e);
+                        log.error(sm.getString("jreLeakListener.jarUrlConnCacheFail"), e);
                     }
                 }
 
@@ -333,6 +345,18 @@ public class JreMemoryLeakPreventionListener implements LifecycleListener {
                             log.debug(sm.getString(
                                     "jreLeakListener.ldapPoolManagerFail"), e);
                         }
+                    }
+                }
+
+                /*
+                 * Present in Java 7 onwards
+                 * Fixed in Java 9 (from early access build 156)
+                 */
+                if (forkJoinCommonPoolProtection && !JreCompat.isJre9Available()) {
+                    // Don't override any explicitly set property
+                    if (System.getProperty(FORK_JOIN_POOL_THREAD_FACTORY_PROPERTY) == null) {
+                        System.setProperty(FORK_JOIN_POOL_THREAD_FACTORY_PROPERTY,
+                                SafeForkJoinWorkerThreadFactory.class.getName());
                     }
                 }
 

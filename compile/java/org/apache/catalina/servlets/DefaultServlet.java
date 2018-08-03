@@ -32,9 +32,11 @@ import java.io.Reader;
 import java.io.Serializable;
 import java.io.StringReader;
 import java.io.StringWriter;
+import java.io.UnsupportedEncodingException;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.security.AccessController;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Enumeration;
 import java.util.Iterator;
 import java.util.List;
@@ -69,10 +71,12 @@ import org.apache.catalina.WebResource;
 import org.apache.catalina.WebResourceRoot;
 import org.apache.catalina.connector.RequestFacade;
 import org.apache.catalina.connector.ResponseFacade;
-import org.apache.catalina.util.RequestUtil;
 import org.apache.catalina.util.ServerInfo;
 import org.apache.catalina.util.URLEncoder;
+import org.apache.tomcat.util.buf.B2CConverter;
+import org.apache.tomcat.util.http.ResponseUtil;
 import org.apache.tomcat.util.res.StringManager;
+import org.apache.tomcat.util.security.Escape;
 import org.apache.tomcat.util.security.PrivilegedGetTccl;
 import org.apache.tomcat.util.security.PrivilegedSetTccl;
 import org.w3c.dom.Document;
@@ -229,6 +233,12 @@ public class DefaultServlet extends HttpServlet {
      * the platform default is used.
      */
     protected String fileEncoding = null;
+    private transient Charset fileEncodingCharset = null;
+
+    /**
+     * If a file has a BOM, should that be used in preference to fileEncoding?
+     */
+    private boolean useBomIfPresent = true;
 
     /**
      * Minimum size for sendfile usage in bytes.
@@ -286,6 +296,20 @@ public class DefaultServlet extends HttpServlet {
                 Integer.parseInt(getServletConfig().getInitParameter("sendfileSize")) * 1024;
 
         fileEncoding = getServletConfig().getInitParameter("fileEncoding");
+        if (fileEncoding == null) {
+            fileEncodingCharset = Charset.defaultCharset();
+            fileEncoding = fileEncodingCharset.name();
+        } else {
+            try {
+                fileEncodingCharset = B2CConverter.getCharset(fileEncoding);
+            } catch (UnsupportedEncodingException e) {
+                throw new ServletException(e);
+            }
+        }
+
+        if (getServletConfig().getInitParameter("useBomIfPresent") != null)
+            useBomIfPresent = Boolean.parseBoolean(
+                    getServletConfig().getInitParameter("useBomIfPresent"));
 
         globalXsltFile = getServletConfig().getInitParameter("globalXsltFile");
         contextXsltFile = getServletConfig().getInitParameter("contextXsltFile");
@@ -400,6 +424,18 @@ public class DefaultServlet extends HttpServlet {
     }
 
 
+    @Override
+    protected void service(HttpServletRequest req, HttpServletResponse resp)
+            throws ServletException, IOException {
+
+        if (req.getDispatcherType() == DispatcherType.ERROR) {
+            doGet(req, resp);
+        } else {
+            super.service(req, resp);
+        }
+    }
+
+
     /**
      * Process a GET request for the specified resource.
      *
@@ -463,24 +499,35 @@ public class DefaultServlet extends HttpServlet {
     protected void doOptions(HttpServletRequest req, HttpServletResponse resp)
         throws ServletException, IOException {
 
+        resp.setHeader("Allow", determineMethodsAllowed(req));
+    }
+
+
+    protected String determineMethodsAllowed(HttpServletRequest req) {
         StringBuilder allow = new StringBuilder();
-        // There is a doGet method
-        allow.append("GET, HEAD");
-        // There is a doPost
-        allow.append(", POST");
-        // There is a doPut
-        allow.append(", PUT");
-        // There is a doDelete
-        allow.append(", DELETE");
+
+        // Start with methods that are always allowed
+        allow.append("OPTIONS, GET, HEAD, POST");
+
+        // PUT and DELETE depend on readonly
+        if (!readOnly) {
+            allow.append(", PUT, DELETE");
+        }
+
         // Trace - assume disabled unless we can prove otherwise
         if (req instanceof RequestFacade &&
                 ((RequestFacade) req).getAllowTrace()) {
             allow.append(", TRACE");
         }
-        // Always allow options
-        allow.append(", OPTIONS");
 
-        resp.setHeader("Allow", allow.toString());
+        return allow.toString();
+    }
+
+
+    protected void sendNotAllowed(HttpServletRequest req, HttpServletResponse resp)
+            throws IOException {
+        resp.addHeader("Allow", determineMethodsAllowed(req));
+        resp.sendError(WebdavStatus.SC_METHOD_NOT_ALLOWED);
     }
 
 
@@ -515,7 +562,7 @@ public class DefaultServlet extends HttpServlet {
         throws ServletException, IOException {
 
         if (readOnly) {
-            resp.sendError(HttpServletResponse.SC_FORBIDDEN);
+            sendNotAllowed(req, resp);
             return;
         }
 
@@ -588,7 +635,7 @@ public class DefaultServlet extends HttpServlet {
         }
 
         try (RandomAccessFile randAccessContentFile =
-            new RandomAccessFile(contentFile, "rw");) {
+            new RandomAccessFile(contentFile, "rw")) {
 
             WebResource oldResource = resources.getResource(path);
 
@@ -596,7 +643,7 @@ public class DefaultServlet extends HttpServlet {
             if (oldResource.isFile()) {
                 try (BufferedInputStream bufOldRevStream =
                     new BufferedInputStream(oldResource.getInputStream(),
-                            BUFFER_SIZE);) {
+                            BUFFER_SIZE)) {
 
                     int numBytesRead;
                     byte[] copyBuffer = new byte[BUFFER_SIZE];
@@ -614,7 +661,7 @@ public class DefaultServlet extends HttpServlet {
             int numBytesRead;
             byte[] transferBuffer = new byte[BUFFER_SIZE];
             try (BufferedInputStream requestBufInStream =
-                new BufferedInputStream(req.getInputStream(), BUFFER_SIZE);) {
+                new BufferedInputStream(req.getInputStream(), BUFFER_SIZE)) {
                 while ((numBytesRead = requestBufInStream.read(transferBuffer)) != -1) {
                     randAccessContentFile.write(transferBuffer, 0, numBytesRead);
                 }
@@ -639,7 +686,7 @@ public class DefaultServlet extends HttpServlet {
         throws ServletException, IOException {
 
         if (readOnly) {
-            resp.sendError(HttpServletResponse.SC_FORBIDDEN);
+            sendNotAllowed(req, resp);
             return;
         }
 
@@ -692,18 +739,18 @@ public class DefaultServlet extends HttpServlet {
      * @return the rewritten path
      */
     protected String rewriteUrl(String path) {
-        return URLEncoder.DEFAULT.encode(path, "UTF-8");
+        return URLEncoder.DEFAULT.encode(path, StandardCharsets.UTF_8);
     }
 
 
     /**
      * Serve the specified resource, optionally including the data content.
      *
-     * @param request  The servlet request we are processing
-     * @param response The servlet response we are creating
-     * @param content  Should the content be included?
-     * @param encoding The encoding to use if it is necessary to access the
-     *                 source as characters rather than as bytes
+     * @param request       The servlet request we are processing
+     * @param response      The servlet response we are creating
+     * @param content       Should the content be included?
+     * @param inputEncoding The encoding to use if it is necessary to access the
+     *                      source as characters rather than as bytes
      *
      * @exception IOException if an input/output error occurs
      * @exception ServletException if a servlet-specified error occurs
@@ -711,7 +758,7 @@ public class DefaultServlet extends HttpServlet {
     protected void serveResource(HttpServletRequest request,
                                  HttpServletResponse response,
                                  boolean content,
-                                 String encoding)
+                                 String inputEncoding)
         throws IOException, ServletException {
 
         boolean serveContent = content;
@@ -735,6 +782,7 @@ public class DefaultServlet extends HttpServlet {
         }
 
         WebResource resource = resources.getResource(path);
+        boolean isError = DispatcherType.ERROR == request.getDispatcherType();
 
         if (!resource.exists()) {
             // Check if we're included so we can return the appropriate
@@ -750,7 +798,12 @@ public class DefaultServlet extends HttpServlet {
                         "defaultServlet.missingResource", requestUri));
             }
 
-            response.sendError(HttpServletResponse.SC_NOT_FOUND, requestUri);
+            if (isError) {
+                response.sendError(((Integer) request.getAttribute(
+                        RequestDispatcher.ERROR_STATUS_CODE)).intValue());
+            } else {
+                response.sendError(HttpServletResponse.SC_NOT_FOUND, requestUri);
+            }
             return;
         }
 
@@ -769,25 +822,14 @@ public class DefaultServlet extends HttpServlet {
                         "defaultServlet.missingResource", requestUri));
             }
 
-            response.sendError(HttpServletResponse.SC_FORBIDDEN, requestUri);
-            return;
-        }
-
-        // If the resource is not a collection, and the resource path
-        // ends with "/" or "\", return NOT FOUND
-        if (resource.isFile() && (path.endsWith("/") || path.endsWith("\\"))) {
-            // Check if we're included so we can return the appropriate
-            // missing resource name in the error
-            String requestUri = (String) request.getAttribute(
-                    RequestDispatcher.INCLUDE_REQUEST_URI);
-            if (requestUri == null) {
-                requestUri = request.getRequestURI();
+            if (isError) {
+                response.sendError(((Integer) request.getAttribute(
+                        RequestDispatcher.ERROR_STATUS_CODE)).intValue());
+            } else {
+                response.sendError(HttpServletResponse.SC_FORBIDDEN, requestUri);
             }
-            response.sendError(HttpServletResponse.SC_NOT_FOUND, requestUri);
             return;
         }
-
-        boolean isError = response.getStatus() >= HttpServletResponse.SC_BAD_REQUEST;
 
         boolean included = false;
         // Check if the conditions specified in the optional If headers are
@@ -826,18 +868,7 @@ public class DefaultServlet extends HttpServlet {
             List<PrecompressedResource> precompressedResources =
                     getAvailablePrecompressedResources(path);
             if (!precompressedResources.isEmpty()) {
-                Collection<String> varyHeaders = response.getHeaders("Vary");
-                boolean addRequired = true;
-                for (String varyHeader : varyHeaders) {
-                    if ("*".equals(varyHeader) ||
-                            "accept-encoding".equalsIgnoreCase(varyHeader)) {
-                        addRequired = false;
-                        break;
-                    }
-                }
-                if (addRequired) {
-                    response.addHeader("Vary", "accept-encoding");
-                }
+                ResponseUtil.addVaryFieldName(response, "accept-encoding");
                 PrecompressedResource bestResource =
                         getBestPrecompressedResource(request, precompressedResources);
                 if (bestResource != null) {
@@ -901,12 +932,7 @@ public class DefaultServlet extends HttpServlet {
             } catch (IllegalStateException e) {
                 // If it fails, we try to get a Writer instead if we're
                 // trying to serve a text file
-                if (!usingPrecompressedVersion &&
-                        ((contentType == null) ||
-                                (contentType.startsWith("text")) ||
-                                (contentType.endsWith("xml")) ||
-                                (contentType.contains("/javascript")))
-                        ) {
+                if (!usingPrecompressedVersion && isText(contentType)) {
                     writer = response.getWriter();
                     // Cannot reliably serve partial content with a Writer
                     ranges = FULL;
@@ -916,7 +942,7 @@ public class DefaultServlet extends HttpServlet {
             }
         }
 
-        // Check to see if a Filter, Valve of wrapper has written some content.
+        // Check to see if a Filter, Valve or wrapper has written some content.
         // If it has, disable range requests and setting of a content length
         // since neither can be done reliably.
         ServletResponse r = response;
@@ -929,6 +955,32 @@ public class DefaultServlet extends HttpServlet {
         }
         if (contentWritten > 0) {
             ranges = FULL;
+        }
+
+        String outputEncoding = response.getCharacterEncoding();
+        Charset charset = B2CConverter.getCharset(outputEncoding);
+        boolean conversionRequired;
+        /*
+         * The test below deliberately uses != to compare two Strings. This is
+         * because the code is looking to see if the default character encoding
+         * has been returned because no explicit character encoding has been
+         * defined. There is no clean way of doing this via the Servlet API. It
+         * would be possible to add a Tomcat specific API but that would require
+         * quite a bit of code to get to the Tomcat specific request object that
+         * may have been wrapped. The != test is a (slightly hacky) quick way of
+         * doing this.
+         */
+        boolean outputEncodingSpecified =
+                outputEncoding != org.apache.coyote.Constants.DEFAULT_BODY_CHARSET.name() &&
+                outputEncoding != resources.getContext().getResponseCharacterEncoding();
+        if (!usingPrecompressedVersion && isText(contentType) && outputEncodingSpecified &&
+                !charset.equals(fileEncodingCharset)) {
+            conversionRequired = true;
+            // Conversion often results fewer/more/different bytes.
+            // That does not play nicely with range requests.
+            ranges = FULL;
+        } else {
+            conversionRequired = false;
         }
 
         if (resource.isDirectory() ||
@@ -950,8 +1002,8 @@ public class DefaultServlet extends HttpServlet {
                     log("DefaultServlet.serveFile:  contentLength=" +
                         contentLength);
                 // Don't set a content length if something else has already
-                // written to the response.
-                if (contentWritten == 0) {
+                // written to the response or if conversion will be taking place
+                if (contentWritten == 0 && !conversionRequired) {
                     response.setContentLengthLong(contentLength);
                 }
             }
@@ -967,36 +1019,72 @@ public class DefaultServlet extends HttpServlet {
                     // Output via a writer so can't use sendfile or write
                     // content directly.
                     if (resource.isDirectory()) {
-                        renderResult = render(getPathPrefix(request), resource, encoding);
+                        renderResult = render(getPathPrefix(request), resource, inputEncoding);
                     } else {
                         renderResult = resource.getInputStream();
+                        if (included) {
+                            // Need to make sure any BOM is removed
+                            if (!renderResult.markSupported()) {
+                                renderResult = new BufferedInputStream(renderResult);
+                            }
+                            Charset bomCharset = processBom(renderResult);
+                            if (bomCharset != null && useBomIfPresent) {
+                                inputEncoding = bomCharset.name();
+                            }
+                        }
                     }
-                    copy(resource, renderResult, writer, encoding);
+                    copy(renderResult, writer, inputEncoding);
                 } else {
-                    // Output is via an InputStream
+                    // Output is via an OutputStream
                     if (resource.isDirectory()) {
-                        renderResult = render(getPathPrefix(request), resource, encoding);
+                        renderResult = render(getPathPrefix(request), resource, inputEncoding);
                     } else {
                         // Output is content of resource
-                        if (!checkSendfile(request, response, resource,
-                                contentLength, null)) {
-                            // sendfile not possible so check if resource
-                            // content is available directly
-                            byte[] resourceBody = resource.getContent();
-                            if (resourceBody == null) {
-                                // Resource content not available, use
-                                // inputstream
-                                renderResult = resource.getInputStream();
+                        // Check to see if conversion is required
+                        if (conversionRequired || included) {
+                            // When including a file, we need to check for a BOM
+                            // to determine if a conversion is required, so we
+                            // might as well always convert
+                            InputStream source = resource.getInputStream();
+                            if (!source.markSupported()) {
+                                source = new BufferedInputStream(source);
+                            }
+                            Charset bomCharset = processBom(source);
+                            if (bomCharset != null && useBomIfPresent) {
+                                inputEncoding = bomCharset.name();
+                            }
+                            // Following test also ensures included resources
+                            // are converted if an explicit output encoding was
+                            // specified
+                            if (outputEncodingSpecified) {
+                                OutputStreamWriter osw = new OutputStreamWriter(ostream, charset);
+                                PrintWriter pw = new PrintWriter(osw);
+                                copy(source, pw, inputEncoding);
+                                pw.flush();
                             } else {
-                                // Use the resource content directly
-                                ostream.write(resourceBody);
+                                // Just included but no conversion
+                                renderResult = source;
+                            }
+                        } else {
+                            if (!checkSendfile(request, response, resource, contentLength, null)) {
+                                // sendfile not possible so check if resource
+                                // content is available directly
+                                byte[] resourceBody = resource.getContent();
+                                if (resourceBody == null) {
+                                    // Resource content not available, use
+                                    // inputstream
+                                    renderResult = resource.getInputStream();
+                                } else {
+                                    // Use the resource content directly
+                                    ostream.write(resourceBody);
+                                }
                             }
                         }
                     }
                     // If a stream was configured, it needs to be copied to
                     // the output (this method closes the stream)
                     if (renderResult != null) {
-                        copy(resource, renderResult, ostream);
+                        copy(renderResult, ostream);
                     }
                 }
             }
@@ -1062,6 +1150,81 @@ public class DefaultServlet extends HttpServlet {
         }
     }
 
+
+    /*
+     * Code borrowed heavily from Jasper's EncodingDetector
+     */
+    private static Charset processBom(InputStream is) throws IOException {
+        // Java supported character sets do not use BOMs longer than 4 bytes
+        byte[] bom = new byte[4];
+        is.mark(bom.length);
+
+        int count = is.read(bom);
+
+        // BOMs are at least 2 bytes
+        if (count < 2) {
+            skip(is, 0);
+            return null;
+        }
+
+        // Look for two byte BOMs
+        int b0 = bom[0] & 0xFF;
+        int b1 = bom[1] & 0xFF;
+        if (b0 == 0xFE && b1 == 0xFF) {
+            skip(is, 2);
+            return StandardCharsets.UTF_16BE;
+        }
+        if (b0 == 0xFF && b1 == 0xFE) {
+            skip(is, 2);
+            return StandardCharsets.UTF_16LE;
+        }
+
+        // Remaining BOMs are at least 3 bytes
+        if (count < 3) {
+            skip(is, 0);
+            return null;
+        }
+
+        // UTF-8 is only 3-byte BOM
+        int b2 = bom[2] & 0xFF;
+        if (b0 == 0xEF && b1 == 0xBB && b2 == 0xBF) {
+            skip(is, 3);
+            return StandardCharsets.UTF_8;
+        }
+
+        if (count < 4) {
+            skip(is, 0);
+            return null;
+        }
+
+        // Look for 4-bute BOMs
+        int b3 = bom[3] & 0xFF;
+        if (b0 == 0x00 && b1 == 0x00 && b2 == 0xFE && b3 == 0xFF) {
+            return Charset.forName("UTF32-BE");
+        }
+        if (b0 == 0xFF && b1 == 0xFE && b2 == 0x00 && b3 == 0x00) {
+            return Charset.forName("UTF32-LE");
+        }
+
+        skip(is, 0);
+        return null;
+    }
+
+
+    private static void skip(InputStream is, int skip) throws IOException {
+        is.reset();
+        while (skip-- > 0) {
+            is.read();
+        }
+    }
+
+
+    private static boolean isText(String contentType) {
+        return  contentType == null || contentType.startsWith("text") ||
+                contentType.endsWith("xml") || contentType.contains("/javascript");
+    }
+
+
     private boolean pathEndsWithCompressedExtension(String path) {
         for (CompressionFormat format : compressionFormats) {
             if (path.endsWith(format.extension)) {
@@ -1083,7 +1246,7 @@ public class DefaultServlet extends HttpServlet {
     }
 
     /**
-     * Match the client preferred encoding formts to the available precompressed resources.
+     * Match the client preferred encoding formats to the available precompressed resources.
      *
      * @param request   The servlet request we are processing
      * @param precompressedResources   List of available precompressed resources.
@@ -1453,7 +1616,7 @@ public class DefaultServlet extends HttpServlet {
               .append("'");
 
             sb.append(">");
-            sb.append(RequestUtil.filter(entry));
+            sb.append(Escape.htmlElementContent(entry));
             if (childResource.isDirectory())
                 sb.append("/");
             sb.append("</entry>");
@@ -1498,7 +1661,7 @@ public class DefaultServlet extends HttpServlet {
             StreamResult out = new StreamResult(osWriter);
             transformer.transform(xmlSource, out);
             osWriter.flush();
-            return (new ByteArrayInputStream(stream.toByteArray()));
+            return new ByteArrayInputStream(stream.toByteArray());
         } catch (TransformerException e) {
             throw new ServletException("XSL transformer error", e);
         } finally {
@@ -1620,7 +1783,7 @@ public class DefaultServlet extends HttpServlet {
             if (childResource.isDirectory())
                 sb.append("/");
             sb.append("\"><tt>");
-            sb.append(RequestUtil.filter(entry));
+            sb.append(Escape.htmlElementContent(entry));
             if (childResource.isDirectory())
                 sb.append("/");
             sb.append("</tt></a></td>\r\n");
@@ -1659,7 +1822,7 @@ public class DefaultServlet extends HttpServlet {
         // Return an input stream to the underlying bytes
         writer.write(sb.toString());
         writer.flush();
-        return (new ByteArrayInputStream(stream.toByteArray()));
+        return new ByteArrayInputStream(stream.toByteArray());
 
     }
 
@@ -1696,7 +1859,7 @@ public class DefaultServlet extends HttpServlet {
             if (resource.isFile()) {
                 StringWriter buffer = new StringWriter();
                 InputStreamReader reader = null;
-                try (InputStream is = resource.getInputStream();){
+                try (InputStream is = resource.getInputStream()){
                     if (encoding != null) {
                         reader = new InputStreamReader(is, encoding);
                     } else {
@@ -1873,14 +2036,16 @@ public class DefaultServlet extends HttpServlet {
                                   HttpServletResponse response,
                                   WebResource resource,
                                   long length, Range range) {
+        String canonicalPath;
         if (sendfileSize > 0
-            && resource.isFile()
             && length > sendfileSize
-            && (resource.getCanonicalPath() != null)
             && (Boolean.TRUE.equals(request.getAttribute(Globals.SENDFILE_SUPPORTED_ATTR)))
             && (request.getClass().getName().equals("org.apache.catalina.connector.RequestFacade"))
-            && (response.getClass().getName().equals("org.apache.catalina.connector.ResponseFacade"))) {
-            request.setAttribute(Globals.SENDFILE_FILENAME_ATTR, resource.getCanonicalPath());
+            && (response.getClass().getName().equals("org.apache.catalina.connector.ResponseFacade"))
+            && resource.isFile()
+            && ((canonicalPath = resource.getCanonicalPath()) != null)
+            ) {
+            request.setAttribute(Globals.SENDFILE_FILENAME_ATTR, canonicalPath);
             if (range == null) {
                 request.setAttribute(Globals.SENDFILE_FILE_START_ATTR, Long.valueOf(0L));
                 request.setAttribute(Globals.SENDFILE_FILE_END_ATTR, Long.valueOf(length));
@@ -1924,7 +2089,7 @@ public class DefaultServlet extends HttpServlet {
                         conditionSatisfied = true;
                 }
 
-                // If none of the given ETags match, 412 Precodition failed is
+                // If none of the given ETags match, 412 Precondition failed is
                 // sent back
                 if (!conditionSatisfied) {
                     response.sendError
@@ -2067,15 +2232,12 @@ public class DefaultServlet extends HttpServlet {
      * output stream, and ensure that both streams are closed before returning
      * (even in the face of an exception).
      *
-     * @param resource  The source resource
      * @param is        The input stream to read the source resource from
      * @param ostream   The output stream to write to
      *
      * @exception IOException if an input/output error occurs
      */
-    protected void copy(WebResource resource, InputStream is,
-                      ServletOutputStream ostream)
-        throws IOException {
+    protected void copy(InputStream is, ServletOutputStream ostream) throws IOException {
 
         IOException exception = null;
         InputStream istream = new BufferedInputStream(is, input);
@@ -2097,30 +2259,20 @@ public class DefaultServlet extends HttpServlet {
      * output stream, and ensure that both streams are closed before returning
      * (even in the face of an exception).
      *
-     * @param resource  The source resource
      * @param is        The input stream to read the source resource from
      * @param writer    The writer to write to
      * @param encoding  The encoding to use when reading the source input stream
      *
      * @exception IOException if an input/output error occurs
      */
-    protected void copy(WebResource resource, InputStream is, PrintWriter writer,
-            String encoding) throws IOException {
-
+    protected void copy(InputStream is, PrintWriter writer, String encoding) throws IOException {
         IOException exception = null;
-
-        InputStream resourceInputStream = null;
-        if (resource.isFile()) {
-            resourceInputStream = resource.getInputStream();
-        } else {
-            resourceInputStream = is;
-        }
 
         Reader reader;
         if (encoding == null) {
-            reader = new InputStreamReader(resourceInputStream);
+            reader = new InputStreamReader(is);
         } else {
-            reader = new InputStreamReader(resourceInputStream, encoding);
+            reader = new InputStreamReader(is, encoding);
         }
 
         // Copy the input stream to the output stream
@@ -2130,8 +2282,9 @@ public class DefaultServlet extends HttpServlet {
         reader.close();
 
         // Rethrow any exception that has occurred
-        if (exception != null)
+        if (exception != null) {
             throw exception;
+        }
     }
 
 

@@ -16,7 +16,7 @@
  */
 package org.apache.coyote.http2;
 
-import java.util.HashMap;
+import java.util.EnumMap;
 import java.util.Map;
 
 import org.apache.juli.logging.Log;
@@ -25,7 +25,7 @@ import org.apache.tomcat.util.res.StringManager;
 
 abstract class ConnectionSettingsBase<T extends Throwable> {
 
-    private final Log log = LogFactory.getLog(ConnectionSettingsBase.class);
+    private final Log log = LogFactory.getLog(ConnectionSettingsBase.class); // must not be static
     private final StringManager sm = StringManager.getManager(ConnectionSettingsBase.class);
 
     private final String connectionId;
@@ -38,15 +38,15 @@ abstract class ConnectionSettingsBase<T extends Throwable> {
     static final int MAX_HEADER_TABLE_SIZE = 1 << 16;
 
     // Defaults
-    static final int DEFAULT_HEADER_TABLE_SIZE = 4096;
+    static final int DEFAULT_HEADER_TABLE_SIZE = Hpack.DEFAULT_TABLE_SIZE;
     static final boolean DEFAULT_ENABLE_PUSH = true;
     static final long DEFAULT_MAX_CONCURRENT_STREAMS = UNLIMITED;
     static final int DEFAULT_INITIAL_WINDOW_SIZE = (1 << 16) - 1;
     static final int DEFAULT_MAX_FRAME_SIZE = MIN_MAX_FRAME_SIZE;
     static final long DEFAULT_MAX_HEADER_LIST_SIZE = UNLIMITED;
 
-    Map<Setting,Long> current = new HashMap<>();
-    Map<Setting,Long> pending = new HashMap<>();
+    Map<Setting, Long> current = new EnumMap<>(Setting.class);
+    Map<Setting, Long> pending = new EnumMap<>(Setting.class);
 
 
     ConnectionSettingsBase(String connectionId) {

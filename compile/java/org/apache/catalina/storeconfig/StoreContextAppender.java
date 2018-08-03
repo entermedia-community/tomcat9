@@ -93,12 +93,11 @@ public class StoreContextAppender extends StoreAppender {
         } catch (IOException e) {
             appBase = file;
         }
-        return (appBase);
+        return appBase;
 
     }
 
     protected File getDocBase(StandardContext context, File appBase) {
-
         File docBase;
         String contextDocBase = context.getOriginalDocBase() ;
         if(contextDocBase == null)
@@ -111,8 +110,7 @@ public class StoreContextAppender extends StoreAppender {
         } catch (IOException e) {
             docBase = file;
         }
-        return (docBase);
-
+        return docBase;
     }
 
     /**
@@ -154,8 +152,7 @@ public class StoreContextAppender extends StoreAppender {
      * @see org.apache.catalina.storeconfig.StoreAppender#defaultInstance(java.lang.Object)
      */
     @Override
-    public Object defaultInstance(Object bean) throws InstantiationException,
-            IllegalAccessException {
+    public Object defaultInstance(Object bean) throws ReflectiveOperationException {
         if (bean instanceof StandardContext) {
             StandardContext defaultContext = new StandardContext();
             /*

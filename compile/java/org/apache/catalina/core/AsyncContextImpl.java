@@ -17,10 +17,9 @@
 package org.apache.catalina.core;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import javax.naming.NamingException;
@@ -46,8 +45,8 @@ import org.apache.coyote.AsyncContextCallback;
 import org.apache.coyote.RequestInfo;
 import org.apache.juli.logging.Log;
 import org.apache.juli.logging.LogFactory;
-import org.apache.tomcat.InstanceManager;
 import org.apache.tomcat.util.ExceptionUtils;
+import org.apache.tomcat.util.buf.UDecoder;
 import org.apache.tomcat.util.res.StringManager;
 
 public class AsyncContextImpl implements AsyncContext, AsyncContextCallback {
@@ -76,7 +75,6 @@ public class AsyncContextImpl implements AsyncContext, AsyncContextCallback {
     private long timeout = -1;
     private AsyncEvent event = null;
     private volatile Request request;
-    private volatile InstanceManager instanceManager;
 
     public AsyncContextImpl(Request request) {
         if (log.isDebugEnabled()) {
@@ -111,6 +109,7 @@ public class AsyncContextImpl implements AsyncContext, AsyncContextCallback {
                 }
             }
         } finally {
+            context.fireRequestDestroyEvent(request.getRequest());
             clearServletRequestResponse();
             context.unbind(Globals.IS_SECURITY_ENABLED, oldCL);
         }
@@ -120,6 +119,8 @@ public class AsyncContextImpl implements AsyncContext, AsyncContextCallback {
     public boolean timeout() {
         AtomicBoolean result = new AtomicBoolean();
         request.getCoyoteRequest().action(ActionCode.ASYNC_TIMEOUT, result);
+        // Avoids NPEs during shutdown. A call to recycle will null this field.
+        Context context = this.context;
 
         if (result.get()) {
             ClassLoader oldCL = context.bind(false, null);
@@ -148,18 +149,21 @@ public class AsyncContextImpl implements AsyncContext, AsyncContextCallback {
     public void dispatch() {
         check();
         String path;
-        String pathInfo;
+        String cpath;
         ServletRequest servletRequest = getRequest();
         if (servletRequest instanceof HttpServletRequest) {
             HttpServletRequest sr = (HttpServletRequest) servletRequest;
-            path = sr.getServletPath();
-            pathInfo = sr.getPathInfo();
+            path = sr.getRequestURI();
+            cpath = sr.getContextPath();
         } else {
-            path = request.getServletPath();
-            pathInfo = request.getPathInfo();
+            path = request.getRequestURI();
+            cpath = request.getContextPath();
         }
-        if (pathInfo != null) {
-            path += pathInfo;
+        if (cpath.length() > 1) {
+            path = path.substring(cpath.length());
+        }
+        if (!context.getDispatchersUseEncodedPaths()) {
+            path = UDecoder.URLDecode(path, StandardCharsets.UTF_8);
         }
         dispatch(path);
     }
@@ -260,10 +264,9 @@ public class AsyncContextImpl implements AsyncContext, AsyncContextCallback {
         check();
         T listener = null;
         try {
-             listener = (T) getInstanceManager().newInstance(clazz.getName(),
-                     clazz.getClassLoader());
-        } catch (InstantiationException | IllegalAccessException | NamingException |
-                ClassNotFoundException e) {
+             listener = (T) context.getInstanceManager().newInstance(
+                     clazz.getName(), clazz.getClassLoader());
+        } catch (ReflectiveOperationException | NamingException e) {
             ServletException se = new ServletException(e);
             throw se;
         } catch (Exception e) {
@@ -282,7 +285,6 @@ public class AsyncContextImpl implements AsyncContext, AsyncContextCallback {
         dispatch = null;
         event = null;
         hasOriginalRequestAndResponse = true;
-        instanceManager = null;
         listeners.clear();
         request = null;
         clearServletRequestResponse();
@@ -388,7 +390,7 @@ public class AsyncContextImpl implements AsyncContext, AsyncContextCallback {
                 try {
                     listener.fireOnError(errorEvent);
                 } catch (Throwable t2) {
-                    ExceptionUtils.handleThrowable(t);
+                    ExceptionUtils.handleThrowable(t2);
                     log.warn("onError() failed for listener of type [" +
                             listener.getClass().getName() + "]", t2);
                 }
@@ -401,6 +403,10 @@ public class AsyncContextImpl implements AsyncContext, AsyncContextCallback {
         if (result.get()) {
             // No listener called dispatch() or complete(). This is an error.
             // SRV.2.3.3.3 (search for "error dispatch")
+            // Take a local copy to avoid threading issues if another thread
+            // clears this (can happen during error handling with non-container
+            // threads)
+            ServletResponse servletResponse = this.servletResponse;
             if (servletResponse instanceof HttpServletResponse) {
                 ((HttpServletResponse) servletResponse).setStatus(
                         HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
@@ -475,20 +481,6 @@ public class AsyncContextImpl implements AsyncContext, AsyncContextCallback {
         } else {
             log.debug(msg);
         }
-    }
-
-    private InstanceManager getInstanceManager() {
-        if (instanceManager == null) {
-            if (context instanceof StandardContext) {
-                instanceManager = ((StandardContext)context).getInstanceManager();
-            } else {
-                instanceManager = new DefaultInstanceManager(null,
-                        new HashMap<String, Map<String, String>>(),
-                        context,
-                        getClass().getClassLoader());
-            }
-        }
-        return instanceManager;
     }
 
     private void check() {

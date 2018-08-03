@@ -49,7 +49,7 @@ public class AprLifecycleListener
     private static boolean instanceCreated = false;
     /**
      * Info messages during init() are cached until Lifecycle.BEFORE_INIT_EVENT
-     * so that, in normal (non-error) cases, init() releated log messages appear
+     * so that, in normal (non-error) cases, init() related log messages appear
      * at the expected point in the lifecycle.
      */
     private static final List<String> initInfoLogMessages = new ArrayList<>(3);
@@ -66,9 +66,9 @@ public class AprLifecycleListener
 
     protected static final int TCN_REQUIRED_MAJOR = 1;
     protected static final int TCN_REQUIRED_MINOR = 2;
-    protected static final int TCN_REQUIRED_PATCH = 6;
+    protected static final int TCN_REQUIRED_PATCH = 14;
     protected static final int TCN_RECOMMENDED_MINOR = 2;
-    protected static final int TCN_RECOMMENDED_PV = 8;
+    protected static final int TCN_RECOMMENDED_PV = 14;
 
 
     // ---------------------------------------------- Properties

@@ -75,7 +75,7 @@ public class StoreConfigLifecycleListener implements LifecycleListener {
      }
 
     /**
-     * Create StoreConfig MBean and load StoreRgistry MBeans name is
+     * Create StoreConfig MBean and load StoreRegistry MBeans name is
      * <code>Catalina:type=StoreConfig</code>.
      * @param server The Server instance
      */
@@ -84,7 +84,7 @@ public class StoreConfigLifecycleListener implements LifecycleListener {
         try {
             Class<?> clazz = Class.forName(getStoreConfigClass(), true, this
                     .getClass().getClassLoader());
-            storeConfig = (IStoreConfig) clazz.newInstance();
+            storeConfig = (IStoreConfig) clazz.getConstructor().newInstance();
             if (null == getStoreRegistry())
                 // default Loading
                 loader.load();

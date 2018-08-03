@@ -311,10 +311,23 @@
     </attribute>
 
     <attribute name="address" required="false">
-      <p>For servers with more than one IP address, this attribute
-      specifies which address will be used for listening on the specified
-      port.  By default, this port will be used on all IP addresses
-      associated with the server.</p>
+      <p>For servers with more than one IP address, this attribute specifies
+      which address will be used for listening on the specified port. By
+      default, the connector will listen all local addresses. Unless the JVM is
+      configured otherwise using system properties, the Java based connectors
+      (NIO, NIO2) will listen on both IPv4 and IPv6 addresses when configured
+      with either <code>0.0.0.0</code> or <code>::</code>. The APR/native
+      connector will only listen on IPv4 addresses if configured with
+      <code>0.0.0.0</code> and will listen on IPv6 addresses (and optionally
+      IPv4 addresses depending on the setting of <strong>ipv6onlyv6</strong>) if
+      configured with <code>::</code>.</p>
+    </attribute>
+
+    <attribute name="allowHostHeaderMismatch" required="false">
+      <p>By default Tomcat will reject requests that specify a host in the
+      request line but specify a different host in the host header. This
+      check can be disabled by setting this attribute to <code>true</code>. If
+      not specified, the default is <code>false</code>.</p>
     </attribute>
 
     <attribute name="allowedTrailerHeaders" required="false">
@@ -341,12 +354,12 @@
       provider will be used.</p>
     </attribute>
 
-    <attribute name="compressableMimeType" required="false">
+    <attribute name="compressibleMimeType" required="false">
       <p>The value is a comma separated list of MIME types for which HTTP
       compression may be used.
       The default value is
       <code>
-      text/html,text/xml,text/plain,text/css,text/javascript,application/javascript
+      text/html,text/xml,text/plain,text/css,text/javascript,application/javascript,application/json,application/xml
       </code>.
       </p>
     </attribute>
@@ -495,7 +508,10 @@
       maximum number of simultaneous requests that can be handled.  If
       not specified, this attribute is set to 200. If an executor is associated
       with this connector, this attribute is ignored as the connector will
-      execute tasks using the executor rather than an internal thread pool.</p>
+      execute tasks using the executor rather than an internal thread pool. Note
+      that if an executor is configured any value set for this attribute will be
+      recorded correctly but it will be reported (e.g. via JMX) as
+      <code>-1</code> to make clear that it is not used.</p>
     </attribute>
 
     <attribute name="maxTrailerSize" required="false">
@@ -506,8 +522,14 @@
     </attribute>
 
     <attribute name="minSpareThreads" required="false">
-      <p>The minimum number of threads always kept running. If not specified,
-      the default of <code>10</code> is used.</p>
+      <p>The minimum number of threads always kept running.  This includes both
+      active and idle threads. If not specified, the default of <code>10</code>
+      is used. If an executor is associated with this connector, this attribute
+      is ignored as the connector will execute tasks using the executor rather
+      than an internal thread pool. Note that if an executor is configured any
+      value set for this attribute will be recorded correctly but it will be
+      reported (e.g. via JMX) as <code>-1</code> to make clear that it is not
+      used.</p>
     </attribute>
 
     <attribute name="noCompressionUserAgents" required="false">
@@ -527,6 +549,40 @@
       the maxThreads setting. If using Servlet 3.0 asynchronous processing, a
       good default is to use the larger of maxThreads and the maximum number of
       expected concurrent requests (synchronous and asynchronous).</p>
+    </attribute>
+
+    <attribute name="rejectIllegalHeaderName" required="false">
+      <p>If an HTTP request is received that contains an illegal header name
+      (i.e. the header name is not a token) this setting determines if the
+      request will be rejected with a 400 response (<code>true</code>) or if the
+      illegal header be ignored (<code>false</code>). The default value is
+      <code>true</code> which will cause the request to be rejected.</p>
+    </attribute>
+
+    <attribute name="relaxedPathChars" required="false">
+      <p>The <a href="https://tools.ietf.org/rfc/rfc7230.txt">HTTP/1.1
+      specification</a> requires that certain characters are %nn encoded when
+      used in URI paths. Unfortunately, many user agents including all the major
+      browsers are not compliant with this specification and use these
+      characters in unencoded form. To prevent Tomcat rejecting such requests,
+      this attribute may be used to specify the additional characters to allow.
+      If not specified, no addtional characters will be allowed. The value may
+      be any combination of the following characters:
+      <code>&quot; &lt; &gt; [ \ ] ^ ` { | }</code> . Any other characters
+      present in the value will be ignored.</p>
+    </attribute>
+
+    <attribute name="relaxedQueryChars" required="false">
+      <p>The <a href="https://tools.ietf.org/rfc/rfc7230.txt">HTTP/1.1
+      specification</a> requires that certain characters are %nn encoded when
+      used in URI query strings. Unfortunately, many user agents including all
+      the major browsers are not compliant with this specification and use these
+      characters in unencoded form. To prevent Tomcat rejecting such requests,
+      this attribute may be used to specify the additional characters to allow.
+      If not specified, no addtional characters will be allowed. The value may
+      be any combination of the following characters:
+      <code>&quot; &lt; &gt; [ \ ] ^ ` { | }</code> . Any other characters
+      present in the value will be ignored.</p>
     </attribute>
 
     <attribute name="restrictedUserAgents" required="false">
@@ -575,12 +631,16 @@
       The default value is <code>5</code> (the value of the
       <code>java.lang.Thread.NORM_PRIORITY</code> constant). See the JavaDoc
       for the <code>java.lang.Thread</code> class for more details on what
-      this priority means.
-      </p>
+      this priority means. If an executor is associated
+      with this connector, this attribute is ignored as the connector will
+      execute tasks using the executor rather than an internal thread pool. Note
+      that if an executor is configured any value set for this attribute will be
+      recorded correctly but it will be reported (e.g. via JMX) as
+      <code>-1</code> to make clear that it is not used.</p>
     </attribute>
 
     <attribute name="throwOnFailure" required="false">
-      <p>If the Connector expereinces an Exception during a Lifecycle transition
+      <p>If the Connector experiences an Exception during a Lifecycle transition
       should the Exception be rethrown or logged? If not specified, the default
       of <code>false</code> will be used. Note that the default can be changed
       by the <code>org.apache.catalina.startup.EXIT_ON_INIT_FAILURE</code>
@@ -810,6 +870,16 @@
         value is set to false. Default value is <code>-1</code> (unlimited).</p>
       </attribute>
 
+      <attribute name="useInheritedChannel" required="false">
+        <p>(bool)Defines if this connector should inherit an inetd/systemd network socket.
+        Only one connector can inherit a network socket. This can option can be
+        used to automatcially start Tomcat once a connection request is made to
+        the systemd super daemon's port.
+        The default value is <code>false</code>. See the JavaDoc
+        for the <code>java.nio.channels.spi.SelectorProvider</code> class for
+        more details.</p>
+      </attribute>
+
       <attribute name="command-line-options" required="false">
         <p>The following command line options are available for the NIO
         connector:<br/>
@@ -912,6 +982,13 @@
         for this connector. The default value is <code>true</code> where
         <code>TCP_DEFER_ACCEPT</code> is supported by the operating system,
         otherwise it is <code>false</code>.</p>
+      </attribute>
+
+      <attribute name="ipv6v6only" required="false">
+        <p>If listening on an IPv6 address on a dual stack system, should the
+        connector only listen on the IPv6 address? If not specified the default
+        is <code>false</code> and the connector will listen on the IPv6 address
+        and the equivalent IPv4 address if present.</p>
       </attribute>
 
       <attribute name="pollerThreadCount" required="false">
@@ -1020,7 +1097,7 @@
      <strong>Connector</strong>.</p>
 
   <p>Additional configuration attributes are available. See the
-  <a href="http2.html">HTTP/2 Upgrade Protocol</a> documentaion for details.</p>
+  <a href="http2.html">HTTP/2 Upgrade Protocol</a> documentation for details.</p>
 
   </subsection>
 
@@ -1097,7 +1174,7 @@
       lists for the certificate authorities. The format is PEM-encoded. If not
       defined, client certificates will not be checked against a certificate
       revocation list (unless an OpenSSL based connector is used and
-      <strong>certificateRevocationPath</strong> is defined). Relative paths
+      <strong>certificateRevocationListPath</strong> is defined). Relative paths
       will be resolved against <code>$CATALINA_BASE</code>. JSSE based
       connectors may also specify a URL for this attribute.</p>
     </attribute>
@@ -1167,8 +1244,12 @@
 
     <attribute name="disableSessionTickets" required="false">
       <p>OpenSSL only.</p>
-      <p>Disables use of TLS Session Tickets (RFC 4507) if set to
-      <code>true</code>. Default is <code>false</code>.</p>
+      <p>Disables use of TLS session tickets (RFC 5077) if set to
+      <code>true</code>. Default is <code>false</code>. Note that when TLS
+      session tickets are in use, the full peer certificate chain will only be
+      available on the first connection. Subsequent connections (that use a
+      ticket to estrablish the TLS session) will only have the peer certificate,
+      not the full chain.</p>
     </attribute>
 
     <attribute name="honorCipherOrder" required="false">
@@ -1205,8 +1286,8 @@
       <p>The names of the protocols to support when communicating with clients.
       This should be a list of any combination of the following:
       </p>
-      <ul><li>SSLv2Hello</li><li>SSLv2</li><li>SSLv3</li><li>TLSv1</li>
-          <li>TLSv1.1</li><li>TLSv1.2</li><li>all</li></ul>
+      <ul><li>SSLv2Hello</li><li>SSLv3</li><li>TLSv1</li><li>TLSv1.1</li>
+      <li>TLSv1.2</li><li>all</li></ul>
       <p>Each token in the list can be prefixed with a plus sign ("+")
       or a minus sign ("-"). A plus sign adds the protocol, a minus sign
       removes it form the current list. The list is built starting from
@@ -1222,6 +1303,16 @@
       unsafe.</p>
       <p>If not specified, the default value of <code>all</code> will be
       used.</p>
+    </attribute>
+
+    <attribute name="revocationEnabled" required="false">
+      <p>JSSE only.</p>
+      <p>Should the JSSE provider enable certificate revocation checks? If
+      <strong>certificateRevocationListFile</strong> is set then this attribute
+      is ignored and revocation checks are always enabled. This attribute is
+      intended to enable revocation checks that have been configured for the
+      current JSSE provider via other means. If not specified, a default of
+      <code>false</code> is used.</p>
     </attribute>
 
     <attribute name="sessionCacheSize" required="false">
@@ -1303,8 +1394,11 @@
       <p>JSSE only.</p>
       <p>The type of key store used for the trust store. The default is the
       value of the <code>javax.net.ssl.trustStoreType</code> system property. If
-      that property is null, the value of <code>keystoreType</code> is used as
-      the default.</p>
+      that property is null, a single certificate has been configured for this
+      TLS virtual host and that certificate has a <code>keystoreType</code> that
+      is not <code>PKCS12</code> then the default will be the
+      <code>keystoreType</code> of the single certificate. If none of these
+      identify a default, the default will be <code>JKS</code>.</p>
      </attribute>
 
   </attributes>
@@ -1374,8 +1468,10 @@
       that is running Tomcat. If your <code>keystoreType</code> doesn't need a
       file use <code>""</code> (empty string) or <code>NONE</code> for this
       parameter.  Relative paths will be resolved against
-      <code>$CATALINA_BASE</code>.  A URL may also be used for this attribute.
-      </p>
+      <code>$CATALINA_BASE</code>.  A URI may also be used for this attribute.
+      When using a domain keystore (<code>keystoreType</code> of
+      <code>DKS</code>), this parameter should be the URI to the domain
+      keystore.</p>
     </attribute>
 
     <attribute name="certificateKeystorePassword" required="false">
@@ -1492,7 +1588,7 @@
     </attribute>
 
     <attribute name="crlFile" required="false">
-      <p>This is an alias for the <code>certificateRevocationFile</code>
+      <p>This is an alias for the <code>certificateRevocationListFile</code>
       attribute of the default
       <a href="#SSL_Support_-_SSLHostConfig">SSLHostConfig</a> element.</p>
     </attribute>
@@ -1648,13 +1744,13 @@
     </attribute>
 
     <attribute name="SSLCARevocationFile" required="false">
-      <p>This is an alias for the <code>certificateRevocationFile</code>
+      <p>This is an alias for the <code>certificateRevocationListFile</code>
       attribute of the default
       <a href="#SSL_Support_-_SSLHostConfig">SSLHostConfig</a> element.</p>
     </attribute>
 
     <attribute name="SSLCARevocationPath" required="false">
-      <p>This is an alias for the <code>certificateRevocationPath</code>
+      <p>This is an alias for the <code>certificateRevocationListPath</code>
       attribute of the default
       <a href="#SSL_Support_-_SSLHostConfig">SSLHostConfig</a> element.</p>
     </attribute>

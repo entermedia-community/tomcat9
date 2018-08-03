@@ -57,7 +57,7 @@ import org.apache.juli.logging.LogFactory;
  * each time the object gets replicated the entire object gets serialized, hence a call to <code>replicate(true)</code>
  * will replicate all objects in this map that are using this node as primary.
  *
- * <br><br><b>REMBER TO CALL</b> <code>breakdown()</code> or <code>finalize()</code> when you are done with the map to
+ * <br><br><b>REMEMBER TO CALL</b> <code>breakdown()</code> or <code>finalize()</code> when you are done with the map to
  * avoid memory leaks.<br><br>
  * TODO implement periodic sync/transfer thread
  *
@@ -66,7 +66,8 @@ import org.apache.juli.logging.LogFactory;
  */
 public class LazyReplicatedMap<K,V> extends AbstractReplicatedMap<K,V> {
     private static final long serialVersionUID = 1L;
-    private final Log log = LogFactory.getLog(LazyReplicatedMap.class);
+    // Lazy init to support serialization
+    private transient volatile Log log;
 
 
 //------------------------------------------------------------------------------
@@ -76,7 +77,7 @@ public class LazyReplicatedMap<K,V> extends AbstractReplicatedMap<K,V> {
      * Creates a new map
      * @param owner The map owner
      * @param channel The channel to use for communication
-     * @param timeout long - timeout for RPC messags
+     * @param timeout long - timeout for RPC messages
      * @param mapContextName String - unique name for this map, to allow multiple maps per channel
      * @param initialCapacity int - the size of this map, see HashMap
      * @param loadFactor float - load factor, see HashMap
@@ -90,7 +91,7 @@ public class LazyReplicatedMap<K,V> extends AbstractReplicatedMap<K,V> {
      * Creates a new map
      * @param owner The map owner
      * @param channel The channel to use for communication
-     * @param timeout long - timeout for RPC messags
+     * @param timeout long - timeout for RPC messages
      * @param mapContextName String - unique name for this map, to allow multiple maps per channel
      * @param initialCapacity int - the size of this map, see HashMap
      * @param cls Class loaders
@@ -103,7 +104,7 @@ public class LazyReplicatedMap<K,V> extends AbstractReplicatedMap<K,V> {
      * Creates a new map
      * @param owner The map owner
      * @param channel The channel to use for communication
-     * @param timeout long - timeout for RPC messags
+     * @param timeout long - timeout for RPC messages
      * @param mapContextName String - unique name for this map, to allow multiple maps per channel
      * @param cls Class loaders
      */
@@ -115,7 +116,7 @@ public class LazyReplicatedMap<K,V> extends AbstractReplicatedMap<K,V> {
      * Creates a new map
      * @param owner The map owner
      * @param channel The channel to use for communication
-     * @param timeout long - timeout for RPC messags
+     * @param timeout long - timeout for RPC messages
      * @param mapContextName String - unique name for this map, to allow multiple maps per channel
      * @param cls Class loaders
      * @param terminate boolean - Flag for whether to terminate this map that failed to start.
@@ -148,6 +149,7 @@ public class LazyReplicatedMap<K,V> extends AbstractReplicatedMap<K,V> {
      */
     @Override
     protected Member[] publishEntryInfo(Object key, Object value) throws ChannelException {
+        Log log = getLog();
         if  (! (key instanceof Serializable && value instanceof Serializable)  ) return new Member[0];
         Member[] members = getMapMembers();
         int firstIdx = getNextBackupIndex();
@@ -208,4 +210,14 @@ public class LazyReplicatedMap<K,V> extends AbstractReplicatedMap<K,V> {
     }
 
 
+    private Log getLog() {
+        if (log == null) {
+            synchronized (this) {
+                if (log == null) {
+                    log = LogFactory.getLog(LazyReplicatedMap.class);
+                }
+            }
+        }
+        return log;
+    }
 }

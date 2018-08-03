@@ -50,8 +50,28 @@ import java.util.logging.Logger;
  * Short configuration information will be sent to <code>System.err</code>.
  */
 public class ClassLoaderLogManager extends LogManager {
+
+    private static final boolean isJava9;
+
+    private static ThreadLocal<Boolean> addingLocalRootLogger = new ThreadLocal<Boolean>() {
+        @Override
+        protected Boolean initialValue() {
+            return Boolean.FALSE;
+        }
+    };
+
     public static final String DEBUG_PROPERTY =
             ClassLoaderLogManager.class.getName() + ".debug";
+
+    static {
+        Class<?> c = null;
+        try {
+            c = Class.forName("java.lang.Runtime$Version");
+        } catch (ClassNotFoundException e) {
+            // Must be Java 8
+        }
+        isJava9 = c != null;
+    }
 
     private final class Cleaner extends Thread {
 
@@ -251,6 +271,13 @@ public class ClassLoaderLogManager extends LogManager {
      */
     @Override
     public String getProperty(String name) {
+
+        // Use a ThreadLocal to work around
+        // https://bugs.openjdk.java.net/browse/JDK-8195096
+        if (".handlers".equals(name) && !addingLocalRootLogger.get().booleanValue()) {
+            return null;
+        }
+
         String prefix = this.prefix.get();
         String result = null;
 
@@ -426,7 +453,11 @@ public class ClassLoaderLogManager extends LogManager {
         // Special case for URL classloaders which are used in containers:
         // only look in the local repositories to avoid redefining loggers 20 times
         try {
-            if (classLoader instanceof URLClassLoader) {
+            if (classLoader instanceof WebappProperties) {
+                if (((WebappProperties) classLoader).hasLoggingConfig()) {
+                    is = classLoader.getResourceAsStream("logging.properties");
+                }
+            } else if (classLoader instanceof URLClassLoader) {
                 URL logConfig = ((URLClassLoader)classLoader).findResource("logging.properties");
 
                 if(null != logConfig) {
@@ -474,7 +505,8 @@ public class ClassLoaderLogManager extends LogManager {
             }
             // Try the default JVM configuration
             if (is == null) {
-                File defaultFile = new File(new File(System.getProperty("java.home"), "lib"),
+                File defaultFile = new File(new File(System.getProperty("java.home"),
+                                                     isJava9 ? "conf" : "lib"),
                     "logging.properties");
                 try {
                     is = new FileInputStream(defaultFile);
@@ -505,8 +537,14 @@ public class ClassLoaderLogManager extends LogManager {
         if (is != null) {
             readConfiguration(is, classLoader);
         }
-        addLogger(localRootLogger);
-
+        try {
+            // Use a ThreadLocal to work around
+            // https://bugs.openjdk.java.net/browse/JDK-8195096
+            addingLocalRootLogger.set(Boolean.TRUE);
+            addLogger(localRootLogger);
+        } finally {
+            addingLocalRootLogger.set(Boolean.FALSE);
+        }
     }
 
 
@@ -550,7 +588,7 @@ public class ClassLoaderLogManager extends LogManager {
                     continue;
                 }
                 // Parse and remove a prefix (prefix start with a digit, such as
-                // "10WebappFooHanlder.")
+                // "10WebappFooHandler.")
                 if (Character.isDigit(handlerClassName.charAt(0))) {
                     int pos = handlerClassName.indexOf('.');
                     if (pos >= 0) {
@@ -560,8 +598,8 @@ public class ClassLoaderLogManager extends LogManager {
                 }
                 try {
                     this.prefix.set(prefix);
-                    Handler handler =
-                        (Handler) classLoader.loadClass(handlerClassName).newInstance();
+                    Handler handler = (Handler) classLoader.loadClass(
+                            handlerClassName).getConstructor().newInstance();
                     // The specification strongly implies all configuration should be done
                     // during the creation of the handler object.
                     // This includes setting level, filter, formatter and encoding.

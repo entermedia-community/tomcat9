@@ -55,7 +55,7 @@ public abstract class WsRemoteEndpointImplBase implements RemoteEndpoint {
 
     protected static final SendResult SENDRESULT_OK = new SendResult();
 
-    private final Log log = LogFactory.getLog(WsRemoteEndpointImplBase.class);
+    private final Log log = LogFactory.getLog(WsRemoteEndpointImplBase.class); // must not be static
 
     private final StateMachine stateMachine = new StateMachine();
 
@@ -299,7 +299,7 @@ public abstract class WsRemoteEndpointImplBase implements RemoteEndpoint {
                 throw new SocketTimeoutException(msg);
             }
         } catch (InterruptedException e) {
-            String msg = sm.getString("wsRemoteEndpoint.sendInterupt");
+            String msg = sm.getString("wsRemoteEndpoint.sendInterrupt");
             wsSession.doClose(new CloseReason(CloseCodes.GOING_AWAY, msg),
                     new CloseReason(CloseCodes.CLOSED_ABNORMALLY, msg));
             throw new IOException(msg, e);
@@ -676,9 +676,9 @@ public abstract class WsRemoteEndpointImplBase implements RemoteEndpoint {
                 endpointConfig.getEncoders()) {
             Encoder instance;
             try {
-                instance = encoderClazz.newInstance();
+                instance = encoderClazz.getConstructor().newInstance();
                 instance.init(endpointConfig);
-            } catch (InstantiationException | IllegalAccessException e) {
+            } catch (ReflectiveOperationException e) {
                 throw new DeploymentException(
                         sm.getString("wsRemoteEndpoint.invalidEncoder",
                                 encoderClazz.getName()), e);
@@ -711,7 +711,7 @@ public abstract class WsRemoteEndpointImplBase implements RemoteEndpoint {
     }
 
 
-    protected abstract void doWrite(SendHandler handler, long blockingWrieTimeoutExpiry,
+    protected abstract void doWrite(SendHandler handler, long blockingWriteTimeoutExpiry,
             ByteBuffer... data);
     protected abstract boolean isMasked();
     protected abstract void doClose();
@@ -1142,7 +1142,7 @@ public abstract class WsRemoteEndpointImplBase implements RemoteEndpoint {
     }
 
 
-    private static enum State {
+    private enum State {
         OPEN,
         STREAM_WRITING,
         WRITER_WRITING,

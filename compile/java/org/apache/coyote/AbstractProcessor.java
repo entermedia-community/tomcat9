@@ -19,14 +19,17 @@ package org.apache.coyote;
 import java.io.IOException;
 import java.io.InterruptedIOException;
 import java.nio.ByteBuffer;
-import java.util.concurrent.Executor;
+import java.util.Iterator;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import javax.servlet.RequestDispatcher;
 
 import org.apache.tomcat.util.ExceptionUtils;
 import org.apache.tomcat.util.buf.ByteChunk;
-import org.apache.tomcat.util.net.AbstractEndpoint;
+import org.apache.tomcat.util.buf.MessageBytes;
+import org.apache.tomcat.util.http.parser.Host;
+import org.apache.tomcat.util.log.UserDataHelper;
 import org.apache.tomcat.util.net.AbstractEndpoint.Handler.SocketState;
 import org.apache.tomcat.util.net.DispatchType;
 import org.apache.tomcat.util.net.SSLSupport;
@@ -42,15 +45,17 @@ public abstract class AbstractProcessor extends AbstractProcessorLight implement
 
     private static final StringManager sm = StringManager.getManager(AbstractProcessor.class);
 
-    protected Adapter adapter;
+    // Used to avoid useless B2C conversion on the host name.
+    private char[] hostNameC = new char[0];
+
+    protected final Adapter adapter;
     protected final AsyncStateMachine asyncStateMachine;
     private volatile long asyncTimeout = -1;
-    protected final AbstractEndpoint<?> endpoint;
+    private volatile long asyncTimeoutGeneration = 0;
     protected final Request request;
     protected final Response response;
     protected volatile SocketWrapperBase<?> socketWrapper = null;
     protected volatile SSLSupport sslSupport;
-    private int maxCookieCount = 200;
 
 
     /**
@@ -58,31 +63,22 @@ public abstract class AbstractProcessor extends AbstractProcessorLight implement
      */
     private ErrorState errorState = ErrorState.NONE;
 
+    protected final UserDataHelper userDataHelper;
 
-    /**
-     * Used by HTTP/2.
-     * @param coyoteRequest The request
-     * @param coyoteResponse The response
-     */
-    protected AbstractProcessor(Request coyoteRequest, Response coyoteResponse) {
-        this(null, coyoteRequest, coyoteResponse);
+    public AbstractProcessor(Adapter adapter) {
+        this(adapter, new Request(), new Response());
     }
 
 
-    public AbstractProcessor(AbstractEndpoint<?> endpoint) {
-        this(endpoint, new Request(), new Response());
-    }
-
-
-    private AbstractProcessor(AbstractEndpoint<?> endpoint, Request coyoteRequest,
-            Response coyoteResponse) {
-        this.endpoint = endpoint;
+    protected AbstractProcessor(Adapter adapter, Request coyoteRequest, Response coyoteResponse) {
+        this.adapter = adapter;
         asyncStateMachine = new AsyncStateMachine(this);
         request = coyoteRequest;
         response = coyoteResponse;
         response.setHook(this);
         request.setResponse(response);
         request.setHook(this);
+        userDataHelper = new UserDataHelper(getLog());
     }
 
     /**
@@ -92,19 +88,29 @@ public abstract class AbstractProcessor extends AbstractProcessorLight implement
      * @param t The error which occurred
      */
     protected void setErrorState(ErrorState errorState, Throwable t) {
+        response.setError();
         boolean blockIo = this.errorState.isIoAllowed() && !errorState.isIoAllowed();
         this.errorState = this.errorState.getMostSevere(errorState);
+        // Don't change the status code for IOException since that is almost
+        // certainly a client disconnect in which case it is preferable to keep
+        // the original status code http://markmail.org/message/4cxpwmxhtgnrwh7n
+        if (response.getStatus() < 400 && !(t instanceof IOException)) {
+            response.setStatus(500);
+        }
+        if (t != null) {
+            request.setAttribute(RequestDispatcher.ERROR_EXCEPTION, t);
+        }
         if (blockIo && !ContainerThreadMarker.isContainerThread() && isAsync()) {
             // The error occurred on a non-container thread during async
             // processing which means not all of the necessary clean-up will
             // have been completed. Dispatch to a container thread to do the
             // clean-up. Need to do it this way to ensure that all the necessary
             // clean-up is performed.
-            if (response.getStatus() < 400) {
-                response.setStatus(500);
+            asyncStateMachine.asyncMustError();
+            if (getLog().isDebugEnabled()) {
+                getLog().debug(sm.getString("abstractProcessor.nonContainerThreadError"), t);
             }
-            getLog().info(sm.getString("abstractProcessor.nonContainerThreadError"), t);
-            socketWrapper.processSocket(SocketEvent.ERROR, true);
+            processSocketEvent(SocketEvent.ERROR, true);
         }
     }
 
@@ -117,16 +123,6 @@ public abstract class AbstractProcessor extends AbstractProcessorLight implement
     @Override
     public Request getRequest() {
         return request;
-    }
-
-
-    /**
-     * Set the associated adapter.
-     *
-     * @param adapter the new adapter
-     */
-    public void setAdapter(Adapter adapter) {
-        this.adapter = adapter;
     }
 
 
@@ -164,10 +160,18 @@ public abstract class AbstractProcessor extends AbstractProcessorLight implement
 
 
     /**
-     * @return the Executor used by the underlying endpoint.
+     * Provides a mechanism to trigger processing on a container thread.
+     *
+     * @param runnable  The task representing the processing that needs to take
+     *                  place on a container thread
      */
-    protected Executor getExecutor() {
-        return endpoint.getExecutor();
+    protected void execute(Runnable runnable) {
+        SocketWrapperBase<?> socketWrapper = this.socketWrapper;
+        if (socketWrapper == null) {
+            throw new RejectedExecutionException(sm.getString("abstractProcessor.noExecute"));
+        } else {
+            socketWrapper.execute(runnable);
+        }
     }
 
 
@@ -250,6 +254,83 @@ public abstract class AbstractProcessor extends AbstractProcessorLight implement
     }
 
 
+    protected void parseHost(MessageBytes valueMB) {
+        if (valueMB == null || valueMB.isNull()) {
+            populateHost();
+            return;
+        }
+
+        ByteChunk valueBC = valueMB.getByteChunk();
+        byte[] valueB = valueBC.getBytes();
+        int valueL = valueBC.getLength();
+        int valueS = valueBC.getStart();
+        if (hostNameC.length < valueL) {
+            hostNameC = new char[valueL];
+        }
+
+        try {
+            // Validates the host name
+            int colonPos = Host.parse(valueMB);
+
+            // Extract the port information first, if any
+            if (colonPos != -1) {
+                int port = 0;
+                for (int i = colonPos + 1; i < valueL; i++) {
+                    char c = (char) valueB[i + valueS];
+                    if (c < '0' || c > '9') {
+                        response.setStatus(400);
+                        setErrorState(ErrorState.CLOSE_CLEAN, null);
+                        return;
+                    }
+                    port = port * 10 + c - '0';
+                }
+                request.setServerPort(port);
+
+                // Only need to copy the host name up to the :
+                valueL = colonPos;
+            }
+
+            // Extract the host name
+            for (int i = 0; i < valueL; i++) {
+                hostNameC[i] = (char) valueB[i + valueS];
+            }
+            request.serverName().setChars(hostNameC, 0, valueL);
+
+        } catch (IllegalArgumentException e) {
+            // IllegalArgumentException indicates that the host name is invalid
+            UserDataHelper.Mode logMode = userDataHelper.getNextMode();
+            if (logMode != null) {
+                String message = sm.getString("abstractProcessor.hostInvalid", valueMB.toString());
+                switch (logMode) {
+                    case INFO_THEN_DEBUG:
+                        message += sm.getString("abstractProcessor.fallToDebug");
+                        //$FALL-THROUGH$
+                    case INFO:
+                        getLog().info(message, e);
+                        break;
+                    case DEBUG:
+                        getLog().debug(message, e);
+                }
+            }
+
+            response.setStatus(400);
+            setErrorState(ErrorState.CLOSE_CLEAN, e);
+        }
+    }
+
+
+    /**
+     * Called when a host name is not present in the request (e.g. HTTP/1.0).
+     * It populates the server name and port with appropriate information. The
+     * source is expected to vary by protocol.
+     * <p>
+     * The default implementation is a NO-OP.
+     */
+    protected void populateHost() {
+        // NO-OP
+    }
+
+
     @Override
     public final void action(ActionCode actionCode, Object param) {
         switch (actionCode) {
@@ -305,10 +386,18 @@ public abstract class AbstractProcessor extends AbstractProcessorLight implement
             ((AtomicBoolean) param).set(getErrorState().isError());
             break;
         }
+        case IS_IO_ALLOWED: {
+            ((AtomicBoolean) param).set(getErrorState().isIoAllowed());
+            break;
+        }
         case CLOSE_NOW: {
             // Prevent further writes to the response
             setSwallowResponse();
-            setErrorState(ErrorState.CLOSE_NOW, null);
+            if (param instanceof Throwable) {
+                setErrorState(ErrorState.CLOSE_NOW, (Throwable) param);
+            } else {
+                setErrorState(ErrorState.CLOSE_NOW, null);
+            }
             break;
         }
         case DISABLE_SWALLOW_INPUT: {
@@ -362,7 +451,11 @@ public abstract class AbstractProcessor extends AbstractProcessorLight implement
             break;
         }
         case REQ_SSL_CERTIFICATE: {
-            sslReHandShake();
+            try {
+                sslReHandShake();
+            } catch (IOException ioe) {
+                setErrorState(ErrorState.CLOSE_CONNECTION_NOW, ioe);
+            }
             break;
         }
 
@@ -374,13 +467,13 @@ public abstract class AbstractProcessor extends AbstractProcessorLight implement
         case ASYNC_COMPLETE: {
             clearDispatches();
             if (asyncStateMachine.asyncComplete()) {
-                socketWrapper.processSocket(SocketEvent.OPEN_READ, true);
+                processSocketEvent(SocketEvent.OPEN_READ, true);
             }
             break;
         }
         case ASYNC_DISPATCH: {
             if (asyncStateMachine.asyncDispatch()) {
-                socketWrapper.processSocket(SocketEvent.OPEN_READ, true);
+                processSocketEvent(SocketEvent.OPEN_READ, true);
             }
             break;
         }
@@ -464,10 +557,7 @@ public abstract class AbstractProcessor extends AbstractProcessorLight implement
             break;
         }
         case DISPATCH_EXECUTE: {
-            SocketWrapperBase<?> wrapper = socketWrapper;
-            if (wrapper != null) {
-                executeDispatches(wrapper);
-            }
+            executeDispatches();
             break;
         }
 
@@ -484,7 +574,19 @@ public abstract class AbstractProcessor extends AbstractProcessorLight implement
             break;
         }
         case PUSH_REQUEST: {
-            doPush((PushToken) param);
+            doPush((Request) param);
+            break;
+        }
+
+        // Servlet 4.0 Trailers
+        case IS_TRAILER_FIELDS_READY: {
+            AtomicBoolean result = (AtomicBoolean) param;
+            result.set(isTrailerFieldsReady());
+            break;
+        }
+        case IS_TRAILER_FIELDS_SUPPORTED: {
+            AtomicBoolean result = (AtomicBoolean) param;
+            result.set(isTrailerFieldsSupported());
             break;
         }
         }
@@ -519,7 +621,14 @@ public abstract class AbstractProcessor extends AbstractProcessorLight implement
     private void doTimeoutAsync() {
         // Avoid multiple timeouts
         setAsyncTimeout(-1);
-        socketWrapper.processSocket(SocketEvent.TIMEOUT, true);
+        asyncTimeoutGeneration = asyncStateMachine.getCurrentGeneration();
+        processSocketEvent(SocketEvent.TIMEOUT, true);
+    }
+
+
+    @Override
+    public boolean checkAsyncTimeoutGeneration() {
+        return asyncTimeoutGeneration == asyncStateMachine.getCurrentGeneration();
     }
 
 
@@ -530,16 +639,6 @@ public abstract class AbstractProcessor extends AbstractProcessorLight implement
 
     public long getAsyncTimeout() {
         return asyncTimeout;
-    }
-
-
-    public int getMaxCookieCount() {
-        return maxCookieCount;
-    }
-
-
-    public void setMaxCookieCount(int maxCookieCount) {
-        this.maxCookieCount = maxCookieCount;
     }
 
 
@@ -637,9 +736,21 @@ public abstract class AbstractProcessor extends AbstractProcessorLight implement
     /**
      * Processors that can perform a TLS re-handshake (e.g. HTTP/1.1) should
      * override this method and implement the re-handshake.
+     *
+     * @throws IOException If authentication is required then there will be I/O
+     *                     with the client and this exception will be thrown if
+     *                     that goes wrong
      */
-    protected void sslReHandShake() {
+    protected void sslReHandShake() throws IOException {
         // NO-OP
+    }
+
+
+    protected void processSocketEvent(SocketEvent event, boolean dispatch) {
+        SocketWrapperBase<?> socketWrapper = getSocketWrapper();
+        if (socketWrapper != null) {
+            socketWrapper.processSocket(event, dispatch);
+        }
     }
 
 
@@ -652,7 +763,36 @@ public abstract class AbstractProcessor extends AbstractProcessorLight implement
     protected abstract boolean isReady();
 
 
-    protected abstract void executeDispatches(SocketWrapperBase<?> wrapper);
+    protected void executeDispatches() {
+        SocketWrapperBase<?> socketWrapper = getSocketWrapper();
+        Iterator<DispatchType> dispatches = getIteratorAndClearDispatches();
+        if (socketWrapper != null) {
+            synchronized (socketWrapper) {
+                /*
+                 * This method is called when non-blocking IO is initiated by defining
+                 * a read and/or write listener in a non-container thread. It is called
+                 * once the non-container thread completes so that the first calls to
+                 * onWritePossible() and/or onDataAvailable() as appropriate are made by
+                 * the container.
+                 *
+                 * Processing the dispatches requires (for APR/native at least)
+                 * that the socket has been added to the waitingRequests queue. This may
+                 * not have occurred by the time that the non-container thread completes
+                 * triggering the call to this method. Therefore, the coded syncs on the
+                 * SocketWrapper as the container thread that initiated this
+                 * non-container thread holds a lock on the SocketWrapper. The container
+                 * thread will add the socket to the waitingRequests queue before
+                 * releasing the lock on the socketWrapper. Therefore, by obtaining the
+                 * lock on socketWrapper before processing the dispatches, we can be
+                 * sure that the socket has been added to the waitingRequests queue.
+                 */
+                while (dispatches != null && dispatches.hasNext()) {
+                    DispatchType dispatchType = dispatches.next();
+                    socketWrapper.processSocket(dispatchType.getSocketStatus(), false);
+                }
+            }
+        }
+    }
 
 
     /**
@@ -722,15 +862,30 @@ public abstract class AbstractProcessor extends AbstractProcessorLight implement
      * Process a push. Processors that support push should override this method
      * and process the provided token.
      *
-     * @param pushToken Contains all the information necessary for the Processor
-     *                  to process the push request
+     * @param pushTarget Contains all the information necessary for the Processor
+     *                   to process the push request
      *
      * @throws UnsupportedOperationException if the protocol does not support
      *         push
      */
-    protected void doPush(PushToken pushToken) {
+    protected void doPush(Request pushTarget) {
         throw new UnsupportedOperationException(
                 sm.getString("abstractProcessor.pushrequest.notsupported"));
+    }
+
+
+    protected abstract boolean isTrailerFieldsReady();
+
+
+    /**
+     * Protocols that support trailer fields should override this method and
+     * return {@code true}.
+     *
+     * @return {@code true} if trailer fields are supported by this processor,
+     *         otherwise {@code false}.
+     */
+    protected boolean isTrailerFieldsSupported() {
+        return false;
     }
 
 

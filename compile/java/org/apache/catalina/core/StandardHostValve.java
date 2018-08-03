@@ -17,6 +17,7 @@
 package org.apache.catalina.core;
 
 import java.io.IOException;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import javax.servlet.DispatcherType;
 import javax.servlet.RequestDispatcher;
@@ -31,6 +32,7 @@ import org.apache.catalina.connector.ClientAbortException;
 import org.apache.catalina.connector.Request;
 import org.apache.catalina.connector.Response;
 import org.apache.catalina.valves.ValveBase;
+import org.apache.coyote.ActionCode;
 import org.apache.juli.logging.Log;
 import org.apache.juli.logging.LogFactory;
 import org.apache.tomcat.util.ExceptionUtils;
@@ -108,8 +110,6 @@ final class StandardHostValve extends ValveBase {
         // Select the Context to be used for this Request
         Context context = request.getContext();
         if (context == null) {
-            response.sendError(HttpServletResponse.SC_INTERNAL_SERVER_ERROR,
-                 sm.getString("standardHost.noContext"));
             return;
         }
 
@@ -118,12 +118,11 @@ final class StandardHostValve extends ValveBase {
         }
 
         boolean asyncAtStart = request.isAsync();
-        boolean asyncDispatching = request.isAsyncDispatching();
 
         try {
             context.bind(Globals.IS_SECURITY_ENABLED, MY_CLASSLOADER);
 
-            if (!asyncAtStart && !context.fireRequestInitEvent(request)) {
+            if (!asyncAtStart && !context.fireRequestInitEvent(request.getRequest())) {
                 // Don't fire listeners during async processing (the listener
                 // fired for the request that called startAsync()).
                 // If a request init listener throws an exception, the request
@@ -131,19 +130,13 @@ final class StandardHostValve extends ValveBase {
                 return;
             }
 
-            // Ask this Context to process this request. Requests that are in
-            // async mode and are not being dispatched to this resource must be
-            // in error and have been routed here to check for application
-            // defined error pages.
+            // Ask this Context to process this request. Requests that are
+            // already in error must have been routed here to check for
+            // application defined error pages so DO NOT forward them to the the
+            // application for processing.
             try {
-                if (!asyncAtStart || asyncDispatching) {
+                if (!response.isErrorReportRequired()) {
                     context.getPipeline().getFirst().invoke(request, response);
-                } else {
-                    // Make sure this request/response is here because an error
-                    // report is required.
-                    if (!response.isErrorReportRequired()) {
-                        throw new IllegalStateException(sm.getString("standardHost.asyncStateError"));
-                    }
                 }
             } catch (Throwable t) {
                 ExceptionUtils.handleThrowable(t);
@@ -171,15 +164,21 @@ final class StandardHostValve extends ValveBase {
 
             // Look for (and render if found) an application level error page
             if (response.isErrorReportRequired()) {
-                if (t != null) {
-                    throwable(request, response, t);
-                } else {
-                    status(request, response);
+                // If an error has occurred that prevents further I/O, don't waste time
+                // producing an error report that will never be read
+                AtomicBoolean result = new AtomicBoolean(false);
+                response.getCoyoteResponse().action(ActionCode.IS_IO_ALLOWED, result);
+                if (result.get()) {
+                    if (t != null) {
+                        throwable(request, response, t);
+                    } else {
+                        status(request, response);
+                    }
                 }
             }
 
-            if (!request.isAsync() && (!asyncAtStart || !response.isErrorReportRequired())) {
-                context.fireRequestDestroyEvent(request);
+            if (!request.isAsync() && !asyncAtStart) {
+                context.fireRequestDestroyEvent(request.getRequest());
             }
         } finally {
             // Access a session (if present) to update last accessed time, based
@@ -302,9 +301,9 @@ final class StandardHostValve extends ValveBase {
             return;
         }
 
-        ErrorPage errorPage = findErrorPage(context, throwable);
+        ErrorPage errorPage = context.findErrorPage(throwable);
         if ((errorPage == null) && (realError != throwable)) {
-            errorPage = findErrorPage(context, realError);
+            errorPage = context.findErrorPage(realError);
         }
 
         if (errorPage != null) {
@@ -406,40 +405,6 @@ final class StandardHostValve extends ValveBase {
             // Report our failure to process this custom page
             container.getLogger().error("Exception Processing " + errorPage, t);
             return false;
-
         }
-    }
-
-
-    /**
-     * Find and return the ErrorPage instance for the specified exception's
-     * class, or an ErrorPage instance for the closest superclass for which
-     * there is such a definition.  If no associated ErrorPage instance is
-     * found, return <code>null</code>.
-     *
-     * @param context The Context in which to search
-     * @param exception The exception for which to find an ErrorPage
-     */
-    private static ErrorPage findErrorPage
-        (Context context, Throwable exception) {
-
-        if (exception == null) {
-            return (null);
-        }
-        Class<?> clazz = exception.getClass();
-        String name = clazz.getName();
-        while (!Object.class.equals(clazz)) {
-            ErrorPage errorPage = context.findErrorPage(name);
-            if (errorPage != null) {
-                return (errorPage);
-            }
-            clazz = clazz.getSuperclass();
-            if (clazz == null) {
-                break;
-            }
-            name = clazz.getName();
-        }
-        return (null);
-
     }
 }

@@ -83,8 +83,11 @@ public class JMXProxyServlet extends HttpServlet {
     @Override
     public void doGet(HttpServletRequest request, HttpServletResponse response)
             throws IOException, ServletException {
-        response.setContentType("text/plain");
-
+        response.setContentType("text/plain;charset=" + Constants.CHARSET);
+        // Stop older versions of IE thinking they know best. We set text/plain
+        // in the line above for a reason. IE's behaviour is unwanted at best
+        // and dangerous at worst.
+        response.setHeader("X-Content-Type-Options", "nosniff");
         PrintWriter writer = response.getWriter();
 
         if (mBeanServer == null) {
@@ -251,7 +254,7 @@ public class JMXProxyServlet extends HttpServlet {
      * @param operation The name of the operation to invoke.
      * @param parameters An array of Strings containing the parameters to the
      *            operation. They will be converted to the appropriate types to
-     *            call the reuested operation.
+     *            call the requested operation.
      * @return The value returned by the requested operation.
      */
     private Object invokeOperationInternal(String onameStr, String operation, String[] parameters)

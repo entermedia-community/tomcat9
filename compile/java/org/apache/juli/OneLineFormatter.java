@@ -39,25 +39,14 @@ import java.util.logging.LogRecord;
 public class OneLineFormatter extends Formatter {
 
     private static final String ST_SEP = System.lineSeparator() + " ";
-    private static final String UNKONWN_THREAD_NAME = "Unknown thread with ID ";
+    private static final String UNKNOWN_THREAD_NAME = "Unknown thread with ID ";
     private static final Object threadMxBeanLock = new Object();
     private static volatile ThreadMXBean threadMxBean = null;
     private static final int THREAD_NAME_CACHE_SIZE = 10000;
-    private static ThreadLocal<LinkedHashMap<Integer,String>> threadNameCache =
-            new ThreadLocal<LinkedHashMap<Integer,String>>() {
-
+    private static ThreadLocal<ThreadNameCache> threadNameCache = new ThreadLocal<ThreadNameCache>() {
         @Override
-        protected LinkedHashMap<Integer,String> initialValue() {
-            return new LinkedHashMap<Integer,String>() {
-
-                private static final long serialVersionUID = 1L;
-
-                @Override
-                protected boolean removeEldestEntry(
-                        Entry<Integer, String> eldest) {
-                    return (size() > THREAD_NAME_CACHE_SIZE);
-                }
-            };
+        protected ThreadNameCache initialValue() {
+            return new ThreadNameCache(THREAD_NAME_CACHE_SIZE);
         }
     };
 
@@ -204,7 +193,7 @@ public class OneLineFormatter extends Formatter {
         }
 
         if (logRecordThreadId > Integer.MAX_VALUE / 2) {
-            result = UNKONWN_THREAD_NAME + logRecordThreadId;
+            result = UNKNOWN_THREAD_NAME + logRecordThreadId;
         } else {
             // Double checked locking OK as threadMxBean is volatile
             if (threadMxBean == null) {
@@ -225,5 +214,22 @@ public class OneLineFormatter extends Formatter {
         cache.put(Integer.valueOf(logRecordThreadId), result);
 
         return result;
+    }
+
+
+    private static class ThreadNameCache extends LinkedHashMap<Integer,String> {
+
+        private static final long serialVersionUID = 1L;
+
+        private final int cacheSize;
+
+        public ThreadNameCache(int cacheSize) {
+            this.cacheSize = cacheSize;
+        }
+
+        @Override
+        protected boolean removeEldestEntry(Entry<Integer, String> eldest) {
+            return (size() > cacheSize);
+        }
     }
 }

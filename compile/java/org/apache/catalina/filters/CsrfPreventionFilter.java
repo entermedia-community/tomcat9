@@ -169,16 +169,13 @@ public class CsrfPreventionFilter extends CsrfPreventionFilterBase {
             return addNonce(super.encodeURL(url));
         }
 
-        /**
+        /*
          * Return the specified URL with the nonce added to the query string.
-         *
-         * @param url URL to be modified
-         * @param nonce The nonce to add
          */
         private String addNonce(String url) {
 
             if ((url == null) || (nonce == null)) {
-                return (url);
+                return url;
             }
 
             String path = url;
@@ -205,7 +202,7 @@ public class CsrfPreventionFilter extends CsrfPreventionFilterBase {
             sb.append('=');
             sb.append(nonce);
             sb.append(anchor);
-            return (sb.toString());
+            return sb.toString();
         }
     }
 

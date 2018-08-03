@@ -21,8 +21,7 @@ import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
 import java.util.zip.GZIPOutputStream;
 
-import static org.junit.Assert.assertTrue;
-
+import org.junit.Assert;
 import org.junit.Test;
 
 import org.apache.coyote.Response;
@@ -40,7 +39,7 @@ public class TestGzipOutputFilter {
      * be a ByteArrayOutputStream so we can inspect the output bytes 3. write a
      * chunk out using the gzipoutputfilter and invoke a flush on the
      * InternalOutputBuffer 4. read from the ByteArrayOutputStream to find out
-     * what's being written out (flushed) 5. find out what's expected by wrting
+     * what's being written out (flushed) 5. find out what's expected by writing
      * to GZIPOutputStream and close it (to force flushing) 6. Compare the size
      * of the two arrays, they should be close (instead of one being much
      * shorter than the other one)
@@ -81,6 +80,6 @@ public class TestGzipOutputFilter {
         byte[] dataExpected = gbos.toByteArray();
 
         // most of the data should have been flushed out
-        assertTrue(dataFound.length >= (dataExpected.length - 20));
+        Assert.assertTrue(dataFound.length >= (dataExpected.length - 20));
     }
 }

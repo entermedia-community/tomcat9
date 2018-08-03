@@ -29,14 +29,14 @@ import org.apache.tomcat.util.res.StringManager;
 
 class Http2Parser {
 
-    private static final Log log = LogFactory.getLog(Http2Parser.class);
-    private static final StringManager sm = StringManager.getManager(Http2Parser.class);
+    protected static final Log log = LogFactory.getLog(Http2Parser.class);
+    protected static final StringManager sm = StringManager.getManager(Http2Parser.class);
 
     static final byte[] CLIENT_PREFACE_START =
             "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n".getBytes(StandardCharsets.ISO_8859_1);
 
-    private final String connectionId;
-    private final Input input;
+    protected final String connectionId;
+    protected final Input input;
     private final Output output;
     private final byte[] frameHeaderBuffer = new byte[9];
 
@@ -45,7 +45,6 @@ class Http2Parser {
             ByteBuffer.allocate(Constants.DEFAULT_HEADER_READ_BUFFER_SIZE);
     private volatile int headersCurrentStream = -1;
     private volatile boolean headersEndStream = false;
-    private volatile boolean streamReset = false;
 
     Http2Parser(String connectionId, Input input, Output output) {
         this.connectionId = connectionId;
@@ -71,7 +70,7 @@ class Http2Parser {
     }
 
 
-    private boolean readFrame(boolean block, FrameType expected)
+    protected boolean readFrame(boolean block, FrameType expected)
             throws IOException, Http2Exception {
 
         if (!input.fill(block, frameHeaderBuffer)) {
@@ -86,50 +85,49 @@ class Http2Parser {
         try {
             validateFrame(expected, frameType, streamId, flags, payloadSize);
         } catch (StreamException se) {
-            swallow(streamId, payloadSize, false);
+            swallow(streamId, payloadSize, false, null);
             throw se;
         }
 
         switch (frameType) {
         case DATA:
-            readDataFrame(streamId, flags, payloadSize);
+            readDataFrame(streamId, flags, payloadSize, null);
             break;
         case HEADERS:
-            readHeadersFrame(streamId, flags, payloadSize);
+            readHeadersFrame(streamId, flags, payloadSize, null);
             break;
         case PRIORITY:
-            readPriorityFrame(streamId);
+            readPriorityFrame(streamId, null);
             break;
         case RST:
-            readRstFrame(streamId);
+            readRstFrame(streamId, null);
             break;
         case SETTINGS:
-            readSettingsFrame(flags, payloadSize);
+            readSettingsFrame(flags, payloadSize, null);
             break;
         case PUSH_PROMISE:
-            readPushPromiseFrame(streamId);
+            readPushPromiseFrame(streamId, null);
             break;
         case PING:
-            readPingFrame(flags);
+            readPingFrame(flags, null);
             break;
         case GOAWAY:
-            readGoawayFrame(payloadSize);
+            readGoawayFrame(payloadSize, null);
             break;
         case WINDOW_UPDATE:
-            readWindowUpdateFrame(streamId);
+            readWindowUpdateFrame(streamId, null);
             break;
         case CONTINUATION:
-            readContinuationFrame(streamId, flags, payloadSize);
+            readContinuationFrame(streamId, flags, payloadSize, null);
             break;
         case UNKNOWN:
-            readUnknownFrame(streamId, frameType, flags, payloadSize);
+            readUnknownFrame(streamId, frameType, flags, payloadSize, null);
         }
 
         return true;
     }
 
-
-    private void readDataFrame(int streamId, int flags, int payloadSize)
+    protected void readDataFrame(int streamId, int flags, int payloadSize, ByteBuffer buffer)
             throws Http2Exception, IOException {
         // Process the Stream
         int padLength = 0;
@@ -138,9 +136,13 @@ class Http2Parser {
 
         int dataLength;
         if (Flags.hasPadding(flags)) {
-            byte[] b = new byte[1];
-            input.fill(true, b);
-            padLength = b[0] & 0xFF;
+            if (buffer == null) {
+                byte[] b = new byte[1];
+                input.fill(true, b);
+                padLength = b[0] & 0xFF;
+            } else {
+                padLength = buffer.get() & 0xFF;
+            }
 
             if (padLength >= payloadSize) {
                 throw new ConnectionException(
@@ -167,22 +169,35 @@ class Http2Parser {
 
         ByteBuffer dest = output.startRequestBodyFrame(streamId, payloadSize);
         if (dest == null) {
-            swallow(streamId, dataLength, false);
+            swallow(streamId, dataLength, false, buffer);
             // Process padding before sending any notifications in case padding
             // is invalid.
             if (padLength > 0) {
-                swallow(streamId, padLength, true);
+                swallow(streamId, padLength, true, buffer);
             }
             if (endOfStream) {
                 output.receivedEndOfStream(streamId);
             }
         } else {
             synchronized (dest) {
-                input.fill(true, dest, dataLength);
+                if (dest.remaining() < dataLength) {
+                    swallow(streamId, dataLength, false, buffer);
+                    // Client has sent more data than permitted by Window size
+                    throw new StreamException(sm.getString("http2Parser.processFrameData.window", connectionId),
+                            Http2Error.FLOW_CONTROL_ERROR, streamId);
+                }
+                if (buffer == null) {
+                    input.fill(true, dest, dataLength);
+                } else {
+                    int oldLimit = buffer.limit();
+                    buffer.limit(buffer.position() + dataLength);
+                    dest.put(buffer);
+                    buffer.limit(oldLimit);
+                }
                 // Process padding before sending any notifications in case
                 // padding is invalid.
                 if (padLength > 0) {
-                    swallow(streamId, padLength, true);
+                    swallow(streamId, padLength, true, buffer);
                 }
                 if (endOfStream) {
                     output.receivedEndOfStream(streamId);
@@ -196,7 +211,7 @@ class Http2Parser {
     }
 
 
-    private void readHeadersFrame(int streamId, int flags, int payloadSize)
+    protected void readHeadersFrame(int streamId, int flags, int payloadSize, ByteBuffer buffer)
             throws Http2Exception, IOException {
 
         headersEndStream = Flags.isEndOfStream(flags);
@@ -207,7 +222,7 @@ class Http2Parser {
         try {
             hpackDecoder.setHeaderEmitter(output.headersStart(streamId, headersEndStream));
         } catch (StreamException se) {
-            swallow(streamId, payloadSize, false);
+            swallow(streamId, payloadSize, false, buffer);
             throw se;
         }
 
@@ -223,7 +238,11 @@ class Http2Parser {
         }
         if (optionalLen > 0) {
             byte[] optional = new byte[optionalLen];
-            input.fill(true, optional);
+            if (buffer == null) {
+                input.fill(true, optional);
+            } else {
+                buffer.get(optional);
+            }
             int optionalPos = 0;
             if (padding) {
                 padLength = ByteUtil.getOneByte(optional, optionalPos++);
@@ -245,9 +264,9 @@ class Http2Parser {
             payloadSize -= padLength;
         }
 
-        readHeaderPayload(streamId, payloadSize);
+        readHeaderPayload(streamId, payloadSize, buffer);
 
-        swallow(streamId, padLength, true);
+        swallow(streamId, padLength, true, buffer);
 
         if (Flags.isEndOfHeaders(flags)) {
             onHeadersComplete(streamId);
@@ -257,9 +276,13 @@ class Http2Parser {
     }
 
 
-    private void readPriorityFrame(int streamId) throws Http2Exception, IOException {
+    protected void readPriorityFrame(int streamId, ByteBuffer buffer) throws Http2Exception, IOException {
         byte[] payload = new byte[5];
-        input.fill(true, payload);
+        if (buffer == null) {
+            input.fill(true, payload);
+        } else {
+            buffer.get(payload);
+        }
 
         boolean exclusive = ByteUtil.isBit7Set(payload[0]);
         int parentStreamId = ByteUtil.get31Bits(payload, 0);
@@ -274,9 +297,13 @@ class Http2Parser {
     }
 
 
-    private void readRstFrame(int streamId) throws Http2Exception, IOException {
+    protected void readRstFrame(int streamId, ByteBuffer buffer) throws Http2Exception, IOException {
         byte[] payload = new byte[4];
-        input.fill(true, payload);
+        if (buffer == null) {
+            input.fill(true, payload);
+        } else {
+            buffer.get(payload);
+        }
 
         long errorCode = ByteUtil.getFourBytes(payload, 0);
         output.reset(streamId, errorCode);
@@ -285,7 +312,7 @@ class Http2Parser {
     }
 
 
-    private void readSettingsFrame(int flags, int payloadSize) throws Http2Exception, IOException {
+    protected void readSettingsFrame(int flags, int payloadSize, ByteBuffer buffer) throws Http2Exception, IOException {
         boolean ack = Flags.isAck(flags);
         if (payloadSize > 0 && ack) {
             throw new ConnectionException(sm.getString(
@@ -297,7 +324,11 @@ class Http2Parser {
             // Process the settings
             byte[] setting = new byte[6];
             for (int i = 0; i < payloadSize / 6; i++) {
-                input.fill(true, setting);
+                if (buffer == null) {
+                    input.fill(true, setting);
+                } else {
+                    buffer.get(setting);
+                }
                 int id = ByteUtil.getTwoBytes(setting, 0);
                 long value = ByteUtil.getFourBytes(setting, 2);
                 output.setting(Setting.valueOf(id), value);
@@ -307,23 +338,41 @@ class Http2Parser {
     }
 
 
-    private void readPushPromiseFrame(int streamId) throws Http2Exception {
+    /**
+     * This default server side implementation always throws an exception. If
+     * re-used for client side parsing, this method should be overridden with an
+     * appropriate implementation.
+     *
+     * @param streamId The pushed stream
+     * @param buffer   The payload, if available
+     *
+     * @throws Http2Exception
+     */
+    protected void readPushPromiseFrame(int streamId, ByteBuffer buffer) throws Http2Exception {
         throw new ConnectionException(sm.getString("http2Parser.processFramePushPromise",
                 connectionId, Integer.valueOf(streamId)), Http2Error.PROTOCOL_ERROR);
     }
 
 
-    private void readPingFrame(int flags) throws IOException {
+    protected void readPingFrame(int flags, ByteBuffer buffer) throws IOException {
         // Read the payload
         byte[] payload = new byte[8];
-        input.fill(true, payload);
+        if (buffer == null) {
+            input.fill(true, payload);
+        } else {
+            buffer.get(payload);
+        }
         output.pingReceive(payload, Flags.isAck(flags));
     }
 
 
-    private void readGoawayFrame(int payloadSize) throws IOException {
+    protected void readGoawayFrame(int payloadSize, ByteBuffer buffer) throws IOException {
         byte[] payload = new byte[payloadSize];
-        input.fill(true, payload);
+        if (buffer == null) {
+            input.fill(true, payload);
+        } else {
+            buffer.get(payload);
+        }
 
         int lastStreamId = ByteUtil.get31Bits(payload, 0);
         long errorCode = ByteUtil.getFourBytes(payload, 4);
@@ -335,9 +384,13 @@ class Http2Parser {
     }
 
 
-    private void readWindowUpdateFrame(int streamId) throws Http2Exception, IOException {
+    protected void readWindowUpdateFrame(int streamId, ByteBuffer buffer) throws Http2Exception, IOException {
         byte[] payload = new byte[4];
-        input.fill(true,  payload);
+        if (buffer == null) {
+            input.fill(true, payload);
+        } else {
+            buffer.get(payload);
+        }
         int windowSizeIncrement = ByteUtil.get31Bits(payload, 0);
 
         if (log.isDebugEnabled()) {
@@ -362,7 +415,7 @@ class Http2Parser {
     }
 
 
-    private void readContinuationFrame(int streamId, int flags, int payloadSize)
+    protected void readContinuationFrame(int streamId, int flags, int payloadSize, ByteBuffer buffer)
             throws Http2Exception, IOException {
         if (headersCurrentStream == -1) {
             // No headers to continue
@@ -371,16 +424,16 @@ class Http2Parser {
                     Integer.toString(streamId)), Http2Error.PROTOCOL_ERROR);
         }
 
-        readHeaderPayload(streamId, payloadSize);
+        readHeaderPayload(streamId, payloadSize, buffer);
 
         if (Flags.isEndOfHeaders(flags)) {
-            onHeadersComplete(streamId);
             headersCurrentStream = -1;
+            onHeadersComplete(streamId);
         }
     }
 
 
-    private void readHeaderPayload(int streamId, int payloadSize)
+    protected void readHeaderPayload(int streamId, int payloadSize, ByteBuffer buffer)
             throws Http2Exception, IOException {
 
         if (log.isDebugEnabled()) {
@@ -407,7 +460,14 @@ class Http2Parser {
             }
             int toRead = Math.min(headerReadBuffer.remaining(), remaining);
             // headerReadBuffer in write mode
-            input.fill(true, headerReadBuffer, toRead);
+            if (buffer == null) {
+                input.fill(true, headerReadBuffer, toRead);
+            } else {
+                int oldLimit = buffer.limit();
+                buffer.limit(buffer.position() + toRead);
+                headerReadBuffer.put(buffer);
+                buffer.limit(oldLimit);
+            }
             // switch to read mode
             headerReadBuffer.flip();
             try {
@@ -415,23 +475,25 @@ class Http2Parser {
             } catch (HpackException hpe) {
                 throw new ConnectionException(
                         sm.getString("http2Parser.processFrameHeaders.decodingFailed"),
-                        Http2Error.COMPRESSION_ERROR);
+                        Http2Error.COMPRESSION_ERROR, hpe);
             }
 
             // switches to write mode
             headerReadBuffer.compact();
             remaining -= toRead;
 
-            if (hpackDecoder.isHeaderCountExceeded() && !streamReset) {
-                streamReset = true;
-                throw new StreamException(sm.getString("http2Parser.headerLimitCount", connectionId,
-                        Integer.valueOf(streamId)), Http2Error.ENHANCE_YOUR_CALM, streamId);
+            if (hpackDecoder.isHeaderCountExceeded()) {
+                StreamException headerException = new StreamException(sm.getString(
+                        "http2Parser.headerLimitCount", connectionId, Integer.valueOf(streamId)),
+                        Http2Error.ENHANCE_YOUR_CALM, streamId);
+                hpackDecoder.getHeaderEmitter().setHeaderException(headerException);
             }
 
-            if (hpackDecoder.isHeaderSizeExceeded(headerReadBuffer.position()) && !streamReset) {
-                streamReset = true;
-                throw new StreamException(sm.getString("http2Parser.headerLimitSize", connectionId,
-                        Integer.valueOf(streamId)), Http2Error.ENHANCE_YOUR_CALM, streamId);
+            if (hpackDecoder.isHeaderSizeExceeded(headerReadBuffer.position())) {
+                StreamException headerException = new StreamException(sm.getString(
+                        "http2Parser.headerLimitSize", connectionId, Integer.valueOf(streamId)),
+                        Http2Error.ENHANCE_YOUR_CALM, streamId);
+                hpackDecoder.getHeaderEmitter().setHeaderException(headerException);
             }
 
             if (hpackDecoder.isHeaderSwallowSizeExceeded(headerReadBuffer.position())) {
@@ -439,18 +501,84 @@ class Http2Parser {
                         connectionId, Integer.valueOf(streamId)), Http2Error.ENHANCE_YOUR_CALM);
             }
         }
-
-        hpackDecoder.getHeaderEmitter().validateHeaders();
     }
 
 
-    private void onHeadersComplete(int streamId) throws Http2Exception {
+    protected void readUnknownFrame(int streamId, FrameType frameType, int flags, int payloadSize, ByteBuffer buffer)
+            throws IOException {
+        try {
+            swallow(streamId, payloadSize, false, buffer);
+        } catch (ConnectionException e) {
+            // Will never happen because swallow() is called with mustBeZero set
+            // to false
+        }
+        output.swallowed(streamId, frameType, flags, payloadSize);
+    }
+
+
+    /**
+     * Swallow bytes.
+     *
+     * @param streamId   Stream being swallowed
+     * @param len        Number of bytes to swallow
+     * @param mustBeZero Are the bytes required to have value zero
+     * @param byteBuffer Unused for non-async parser
+     *
+     * @throws IOException If an I/O error occurs reading additional bytes into
+     *                     the input buffer.
+     * @throws ConnectionException If the swallowed bytes are expected to have a
+     *                             value of zero but do not
+     */
+    protected void swallow(int streamId, int len, boolean mustBeZero, ByteBuffer byteBuffer)
+            throws IOException, ConnectionException {
+        if (log.isDebugEnabled()) {
+            log.debug(sm.getString("http2Parser.swallow.debug", connectionId,
+                    Integer.toString(streamId), Integer.toString(len)));
+        }
+        if (len == 0) {
+            return;
+        }
+        if (!mustBeZero && byteBuffer != null) {
+            byteBuffer.position(byteBuffer.position() + len);
+        } else {
+            int read = 0;
+            byte[] buffer = new byte[1024];
+            while (read < len) {
+                int thisTime = Math.min(buffer.length, len - read);
+                if (byteBuffer == null) {
+                    input.fill(true, buffer, 0, thisTime);
+                } else {
+                    byteBuffer.get(buffer, 0, thisTime);
+                }
+                if (mustBeZero) {
+                    // Validate the padding is zero since receiving non-zero padding
+                    // is a strong indication of either a faulty client or a server
+                    // side bug.
+                    for (int i = 0; i < thisTime; i++) {
+                        if (buffer[i] != 0) {
+                            throw new ConnectionException(sm.getString("http2Parser.nonZeroPadding",
+                                    connectionId, Integer.toString(streamId)), Http2Error.PROTOCOL_ERROR);
+                        }
+                    }
+                }
+                read += thisTime;
+            }
+        }
+    }
+
+
+    protected void onHeadersComplete(int streamId) throws Http2Exception {
         // Any left over data is a compression error
         if (headerReadBuffer.position() > 0) {
             throw new ConnectionException(
                     sm.getString("http2Parser.processFrameHeaders.decodingDataLeft"),
                     Http2Error.COMPRESSION_ERROR);
         }
+
+        // Delay validation (and triggering any exception) until this point
+        // since all the headers still have to be read if a StreamException is
+        // going to be thrown.
+        hpackDecoder.getHeaderEmitter().validateHeaders();
 
         output.headersEnd(streamId);
 
@@ -463,53 +591,6 @@ class Http2Parser {
         if (headerReadBuffer.capacity() > Constants.DEFAULT_HEADER_READ_BUFFER_SIZE) {
             headerReadBuffer = ByteBuffer.allocate(Constants.DEFAULT_HEADER_READ_BUFFER_SIZE);
         }
-
-        // Clear the 'stream has been reset' flag, if set
-        if (streamReset) {
-            streamReset = false;
-        }
-    }
-
-
-    private void readUnknownFrame(int streamId, FrameType frameType, int flags, int payloadSize)
-            throws IOException {
-        try {
-            swallow(streamId, payloadSize, false);
-        } catch (ConnectionException e) {
-            // Will never happen because swallow() is called with mustBeZero set
-            // to false
-        }
-        output.swallowed(streamId, frameType, flags, payloadSize);
-    }
-
-
-    private void swallow(int streamId, int len, boolean mustBeZero)
-            throws IOException, ConnectionException {
-        if (log.isDebugEnabled()) {
-            log.debug(sm.getString("http2Parser.swallow.debug", connectionId,
-                    Integer.toString(streamId), Integer.toString(len)));
-        }
-        if (len == 0) {
-            return;
-        }
-        int read = 0;
-        byte[] buffer = new byte[1024];
-        while (read < len) {
-            int thisTime = Math.min(buffer.length, len - read);
-            input.fill(true, buffer, 0, thisTime);
-            if (mustBeZero) {
-                // Validate the padding is zero since receiving non-zero padding
-                // is a strong indication of either a faulty client or a server
-                // side bug.
-                for (int i = 0; i < thisTime; i++) {
-                    if (buffer[i] != 0) {
-                        throw new ConnectionException(sm.getString("http2Parser.nonZeroPadding",
-                                connectionId, Integer.toString(streamId)), Http2Error.PROTOCOL_ERROR);
-                    }
-                }
-            }
-            read += thisTime;
-        }
     }
 
 
@@ -521,7 +602,7 @@ class Http2Parser {
      * For validation applicable to some but not all frame types, use your
      * judgement.
      */
-    private void validateFrame(FrameType expected, FrameType frameType, int streamId, int flags,
+    protected void validateFrame(FrameType expected, FrameType frameType, int streamId, int flags,
             int payloadSize) throws Http2Exception {
 
         if (log.isDebugEnabled()) {
@@ -638,7 +719,8 @@ class Http2Parser {
         void swallowedPadding(int streamId, int paddingLength) throws ConnectionException, IOException;
 
         // Header frames
-        HeaderEmitter headersStart(int streamId, boolean headersEndStream) throws Http2Exception;
+        HeaderEmitter headersStart(int streamId, boolean headersEndStream)
+                throws Http2Exception, IOException;
         void headersEnd(int streamId) throws ConnectionException;
 
         // Priority frames (also headers)

@@ -34,7 +34,6 @@ import javax.servlet.http.HttpServletResponse;
 import org.apache.catalina.Globals;
 import org.apache.coyote.ActionCode;
 import org.apache.coyote.Response;
-import org.apache.tomcat.util.buf.B2CConverter;
 import org.apache.tomcat.util.buf.C2BConverter;
 import org.apache.tomcat.util.res.StringManager;
 
@@ -103,12 +102,6 @@ public class OutputBuffer extends Writer {
 
 
     /**
-     * Encoding to use.
-     */
-    private String enc;
-
-
-    /**
      * Current char to byte converter.
      */
     protected C2BConverter conv;
@@ -128,34 +121,20 @@ public class OutputBuffer extends Writer {
 
     // ----------------------------------------------------------- Constructors
 
-
     /**
-     * Default constructor. Allocate the buffer with the default buffer size.
-     */
-    public OutputBuffer() {
-
-        this(DEFAULT_BUFFER_SIZE);
-
-    }
-
-
-    /**
-     * Alternate constructor which allows specifying the initial buffer size.
+     * Create the buffer with the specified initial size.
      *
      * @param size Buffer size to use
      */
     public OutputBuffer(int size) {
-
         bb = ByteBuffer.allocate(size);
         clear(bb);
         cb = CharBuffer.allocate(size);
         clear(cb);
-
     }
 
 
     // ------------------------------------------------------------- Properties
-
 
     /**
      * Associated Coyote response.
@@ -218,8 +197,6 @@ public class OutputBuffer extends Writer {
             conv.recycle();
             conv = null;
         }
-
-        enc = null;
     }
 
 
@@ -454,6 +431,16 @@ public class OutputBuffer extends Writer {
             }
             if (from.remaining() > 0) {
                 flushByteBuffer();
+            } else if (conv.isUndeflow() && bb.limit() > bb.capacity() - 4) {
+                // Handle an edge case. There are no more chars to write at the
+                // moment but there is a leftover character in the converter
+                // which must be part of a surrogate pair. The byte buffer does
+                // not have enough space left to output the bytes for this pair
+                // once it is complete )it will require 4 bytes) so flush now to
+                // prevent the bytes for the leftover char and the rest of the
+                // surrogate pair yet to be written from being lost.
+                // See TestOutputBuffer#testUtf8SurrogateBody()
+                flushByteBuffer();
             }
         }
 
@@ -543,29 +530,21 @@ public class OutputBuffer extends Writer {
     }
 
 
-    public void setEncoding(String s) {
-        enc = s;
-    }
-
-
     public void checkConverter() throws IOException {
-        if (conv == null) {
-            setConverter();
+        if (conv != null) {
+            return;
         }
-    }
 
-
-    private void setConverter() throws IOException {
+        Charset charset = null;
 
         if (coyoteResponse != null) {
-            enc = coyoteResponse.getCharacterEncoding();
+            charset = coyoteResponse.getCharset();
         }
 
-        if (enc == null) {
-            enc = org.apache.coyote.Constants.DEFAULT_CHARACTER_ENCODING;
+        if (charset == null) {
+            charset = org.apache.coyote.Constants.DEFAULT_BODY_CHARSET;
         }
 
-        final Charset charset = getCharset(enc);
         conv = encoders.get(charset);
 
         if (conv == null) {
@@ -575,38 +554,10 @@ public class OutputBuffer extends Writer {
     }
 
 
-    private static Charset getCharset(final String encoding) throws IOException {
-        if (Globals.IS_SECURITY_ENABLED) {
-            try {
-                return AccessController.doPrivileged(new PrivilegedExceptionAction<Charset>() {
-                    @Override
-                    public Charset run() throws IOException {
-                        return B2CConverter.getCharset(encoding);
-                    }
-                });
-            } catch (PrivilegedActionException ex) {
-                Exception e = ex.getException();
-                if (e instanceof IOException) {
-                    throw (IOException) e;
-                } else {
-                    throw new IOException(ex);
-                }
-            }
-        } else {
-            return B2CConverter.getCharset(encoding);
-        }
-    }
-
-
     private static C2BConverter createConverter(final Charset charset) throws IOException {
         if (Globals.IS_SECURITY_ENABLED) {
             try {
-                return AccessController.doPrivileged(new PrivilegedExceptionAction<C2BConverter>() {
-                    @Override
-                    public C2BConverter run() throws IOException {
-                        return new C2BConverter(charset);
-                    }
-                });
+                return AccessController.doPrivileged(new PrivilegedCreateConverter(charset));
             } catch (PrivilegedActionException ex) {
                 Exception e = ex.getException();
                 if (e instanceof IOException) {
@@ -639,7 +590,7 @@ public class OutputBuffer extends Writer {
 
 
     public void setBufferSize(int size) {
-        if (size != bb.capacity()) {
+        if (size > bb.capacity()) {
             bb = ByteBuffer.allocate(size);
             clear(bb);
         }
@@ -660,7 +611,6 @@ public class OutputBuffer extends Writer {
                 conv.recycle();
             }
             conv = null;
-            enc = null;
         }
         initial = true;
     }
@@ -885,5 +835,21 @@ public class OutputBuffer extends Writer {
         buffer.mark()
               .position(buffer.limit())
               .limit(buffer.capacity());
+    }
+
+
+    private static class PrivilegedCreateConverter
+            implements PrivilegedExceptionAction<C2BConverter> {
+
+        private final Charset charset;
+
+        public PrivilegedCreateConverter(Charset charset) {
+            this.charset = charset;
+        }
+
+        @Override
+        public C2BConverter run() throws IOException {
+            return new C2BConverter(charset);
+        }
     }
 }

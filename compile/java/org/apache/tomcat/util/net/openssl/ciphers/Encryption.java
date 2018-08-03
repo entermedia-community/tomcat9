@@ -26,6 +26,8 @@ enum Encryption {
     AES256CCM,
     AES256CCM8,
     AES256GCM,
+    ARIA128GCM,
+    ARIA256GCM,
     CAMELLIA256,
     CAMELLIA128,
     CHACHA20POLY1305,
@@ -37,5 +39,5 @@ enum Encryption {
     FZA,
     RC4,
     RC2,
-    eNULL;
+    eNULL
 }

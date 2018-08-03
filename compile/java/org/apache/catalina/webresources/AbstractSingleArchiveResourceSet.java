@@ -21,18 +21,22 @@ import java.io.IOException;
 import java.net.MalformedURLException;
 import java.util.Enumeration;
 import java.util.HashMap;
+import java.util.Map;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 
 import org.apache.catalina.LifecycleException;
 import org.apache.catalina.WebResourceRoot;
 import org.apache.tomcat.util.buf.UriUtil;
+import org.apache.tomcat.util.compat.JreCompat;
 
 /**
  * Base class for a {@link org.apache.catalina.WebResourceSet} based on a
  * single, rather than nested, archive.
  */
 public abstract class AbstractSingleArchiveResourceSet extends AbstractArchiveResourceSet {
+
+    private volatile Boolean multiRelease;
 
     /**
      * A no argument constructor is required for this to work with the digester.
@@ -59,7 +63,7 @@ public abstract class AbstractSingleArchiveResourceSet extends AbstractArchiveRe
 
 
     @Override
-    protected HashMap<String,JarEntry> getArchiveEntries(boolean single) {
+    protected Map<String,JarEntry> getArchiveEntries(boolean single) {
         synchronized (archiveLock) {
             if (archiveEntries == null && !single) {
                 JarFile jarFile = null;
@@ -103,11 +107,37 @@ public abstract class AbstractSingleArchiveResourceSet extends AbstractArchiveRe
     }
 
 
+    @Override
+    protected boolean isMultiRelease() {
+        if (multiRelease == null) {
+            synchronized (archiveLock) {
+                if (multiRelease == null) {
+                    JarFile jarFile = null;
+                    try {
+                        jarFile = openJarFile();
+                        multiRelease = Boolean.valueOf(
+                                JreCompat.getInstance().jarFileIsMultiRelease(jarFile));
+                    } catch (IOException ioe) {
+                        // Should never happen
+                        throw new IllegalStateException(ioe);
+                    } finally {
+                        if (jarFile != null) {
+                            closeJarFile();
+                        }
+                    }
+                }
+            }
+        }
+
+        return multiRelease.booleanValue();
+    }
+
+
     //-------------------------------------------------------- Lifecycle methods
     @Override
     protected void initInternal() throws LifecycleException {
 
-        try (JarFile jarFile = new JarFile(getBase())) {
+        try (JarFile jarFile = JreCompat.getInstance().jarFileNewInstance(getBase())) {
             setManifest(jarFile.getManifest());
         } catch (IOException ioe) {
             throw new IllegalArgumentException(ioe);

@@ -243,8 +243,8 @@ public class JAASMemoryLoginModule extends MemoryRealm implements LoginModule {
         if (option instanceof String) {
             try {
                 Class<?> clazz = Class.forName((String) option);
-                credentialHandler = (CredentialHandler) clazz.newInstance();
-            } catch (InstantiationException | IllegalAccessException | ClassNotFoundException e) {
+                credentialHandler = (CredentialHandler) clazz.getConstructor().newInstance();
+            } catch (ReflectiveOperationException e) {
                 throw new IllegalArgumentException(e);
             }
         }
@@ -400,7 +400,6 @@ public class JAASMemoryLoginModule extends MemoryRealm implements LoginModule {
             digester.parse(file);
         } catch (Exception e) {
             log.warn("Error processing configuration file " + file.getAbsolutePath(), e);
-            return;
         } finally {
             digester.reset();
         }

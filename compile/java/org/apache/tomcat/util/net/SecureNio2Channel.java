@@ -38,6 +38,7 @@ import javax.net.ssl.SSLException;
 import org.apache.juli.logging.Log;
 import org.apache.juli.logging.LogFactory;
 import org.apache.tomcat.util.buf.ByteBufferUtils;
+import org.apache.tomcat.util.compat.JreCompat;
 import org.apache.tomcat.util.net.TLSClientHelloExtractor.ExtractorResult;
 import org.apache.tomcat.util.net.openssl.ciphers.Cipher;
 import org.apache.tomcat.util.res.StringManager;
@@ -145,30 +146,41 @@ public class SecureNio2Channel extends Nio2Channel  {
 
     private class FutureFlush implements Future<Boolean> {
         private Future<Integer> integer;
+        private Exception e = null;
         protected FutureFlush() {
-            integer = sc.write(netOutBuffer);
+            try {
+                integer = sc.write(netOutBuffer);
+            } catch (IllegalStateException e) {
+                this.e = e;
+            }
         }
         @Override
         public boolean cancel(boolean mayInterruptIfRunning) {
-            return integer.cancel(mayInterruptIfRunning);
+            return (e != null) ? true : integer.cancel(mayInterruptIfRunning);
         }
         @Override
         public boolean isCancelled() {
-            return integer.isCancelled();
+            return (e != null) ? true : integer.isCancelled();
         }
         @Override
         public boolean isDone() {
-            return integer.isDone();
+            return (e != null) ? true : integer.isDone();
         }
         @Override
         public Boolean get() throws InterruptedException,
                 ExecutionException {
+            if (e != null) {
+                throw new ExecutionException(e);
+            }
             return Boolean.valueOf(integer.get().intValue() >= 0);
         }
         @Override
         public Boolean get(long timeout, TimeUnit unit)
                 throws InterruptedException, ExecutionException,
                 TimeoutException {
+            if (e != null) {
+                throw new ExecutionException(e);
+            }
             return Boolean.valueOf(integer.get(timeout, unit).intValue() >= 0);
         }
     }
@@ -219,6 +231,7 @@ public class SecureNio2Channel extends Nio2Channel  {
         }
 
         SSLEngineResult handshake = null;
+        long timeout = endpoint.getConnectionTimeout();
 
         while (!handshakeComplete) {
             switch (handshakeStatus) {
@@ -227,8 +240,14 @@ public class SecureNio2Channel extends Nio2Channel  {
                     throw new IOException(sm.getString("channel.nio.ssl.notHandshaking"));
                 }
                 case FINISHED: {
-                    if (endpoint.hasNegotiableProtocols() && sslEngine instanceof SSLUtil.ProtocolInfo) {
-                        socket.setNegotiatedProtocol(((SSLUtil.ProtocolInfo) sslEngine).getNegotiatedProtocol());
+                    if (endpoint.hasNegotiableProtocols()) {
+                        if (sslEngine instanceof SSLUtil.ProtocolInfo) {
+                            socket.setNegotiatedProtocol(
+                                    ((SSLUtil.ProtocolInfo) sslEngine).getNegotiatedProtocol());
+                        } else if (JreCompat.isJre9Available()) {
+                            socket.setNegotiatedProtocol(
+                                    JreCompat.getInstance().getApplicationProtocol(sslEngine));
+                        }
                     }
                     //we are complete if we have delivered the last package
                     handshakeComplete = !netOutBuffer.hasRemaining();
@@ -237,12 +256,17 @@ public class SecureNio2Channel extends Nio2Channel  {
                         return 0;
                     } else {
                         if (async) {
-                            sc.write(netOutBuffer, socket, handshakeWriteCompletionHandler);
+                            sc.write(netOutBuffer, Nio2Endpoint.toNio2Timeout(timeout),
+                                    TimeUnit.MILLISECONDS, socket, handshakeWriteCompletionHandler);
                         } else {
                             try {
-                                sc.write(netOutBuffer).get(endpoint.getSoTimeout(), TimeUnit.MILLISECONDS);
+                                if (timeout > 0) {
+                                    sc.write(netOutBuffer).get(timeout, TimeUnit.MILLISECONDS);
+                                } else {
+                                    sc.write(netOutBuffer).get();
+                                }
                             } catch (InterruptedException | ExecutionException | TimeoutException e) {
-                                throw new IOException(sm.getString("channel.nio.ssl.handhakeError"));
+                                throw new IOException(sm.getString("channel.nio.ssl.handshakeError"));
                             }
                         }
                         return 1;
@@ -270,12 +294,17 @@ public class SecureNio2Channel extends Nio2Channel  {
                     if (handshakeStatus != HandshakeStatus.NEED_UNWRAP || netOutBuffer.remaining() > 0) {
                         //should actually return OP_READ if we have NEED_UNWRAP
                         if (async) {
-                            sc.write(netOutBuffer, socket, handshakeWriteCompletionHandler);
+                            sc.write(netOutBuffer, Nio2Endpoint.toNio2Timeout(timeout),
+                                    TimeUnit.MILLISECONDS, socket, handshakeWriteCompletionHandler);
                         } else {
                             try {
-                                sc.write(netOutBuffer).get(endpoint.getSoTimeout(), TimeUnit.MILLISECONDS);
+                                if (timeout > 0) {
+                                    sc.write(netOutBuffer).get(timeout, TimeUnit.MILLISECONDS);
+                                } else {
+                                    sc.write(netOutBuffer).get();
+                                }
                             } catch (InterruptedException | ExecutionException | TimeoutException e) {
-                                throw new IOException(sm.getString("channel.nio.ssl.handhakeError"));
+                                throw new IOException(sm.getString("channel.nio.ssl.handshakeError"));
                             }
                         }
                         return 1;
@@ -291,19 +320,32 @@ public class SecureNio2Channel extends Nio2Channel  {
                         if (handshakeStatus == HandshakeStatus.NEED_TASK)
                             handshakeStatus = tasks();
                     } else if (handshake.getStatus() == Status.BUFFER_UNDERFLOW) {
-                        //read more data, reregister for OP_READ
+                        if (netInBuffer.position() == netInBuffer.limit()) {
+                            //clear the buffer if we have emptied it out on data
+                            netInBuffer.clear();
+                        }
+                        //read more data
                         if (async) {
-                            sc.read(netInBuffer, socket, handshakeReadCompletionHandler);
+                            sc.read(netInBuffer, Nio2Endpoint.toNio2Timeout(timeout),
+                                    TimeUnit.MILLISECONDS, socket, handshakeReadCompletionHandler);
                         } else {
                             try {
-                                sc.read(netInBuffer).get(endpoint.getSoTimeout(), TimeUnit.MILLISECONDS);
+                                int read;
+                                if (timeout > 0) {
+                                    read = sc.read(netInBuffer).get(timeout, TimeUnit.MILLISECONDS).intValue();
+                                } else {
+                                    read = sc.read(netInBuffer).get().intValue();
+                                }
+                                if (read == -1) {
+                                    throw new EOFException();
+                                }
                             } catch (InterruptedException | ExecutionException | TimeoutException e) {
-                                throw new IOException(sm.getString("channel.nio.ssl.handhakeError"));
+                                throw new IOException(sm.getString("channel.nio.ssl.handshakeError"));
                             }
                         }
                         return 1;
                     } else {
-                        throw new IOException(sm.getString("channel.nio.ssl.unexpectedStatusDuringUnwrap", handshakeStatus));
+                        throw new IOException(sm.getString("channel.nio.ssl.unexpectedStatusDuringUnwrap", handshake.getStatus()));
                     }
                     break;
                 }
@@ -329,13 +371,14 @@ public class SecureNio2Channel extends Nio2Channel  {
         // an optimisation for the typical case so we don't create an
         // SNIExtractor only to discover there is no data to process
         if (netInBuffer.position() == 0) {
-            sc.read(netInBuffer, socket, handshakeReadCompletionHandler);
+            sc.read(netInBuffer, Nio2Endpoint.toNio2Timeout(endpoint.getConnectionTimeout()),
+                    TimeUnit.MILLISECONDS, socket, handshakeReadCompletionHandler);
             return 1;
         }
 
         TLSClientHelloExtractor extractor = new TLSClientHelloExtractor(netInBuffer);
 
-        while (extractor.getResult() == ExtractorResult.UNDERFLOW &&
+        if (extractor.getResult() == ExtractorResult.UNDERFLOW &&
                 netInBuffer.capacity() < endpoint.getSniParseLimit()) {
             // extractor needed more data to process but netInBuffer was full so
             // expand the buffer and read some more data.
@@ -344,21 +387,26 @@ public class SecureNio2Channel extends Nio2Channel  {
                     Integer.toString(newLimit)));
 
             netInBuffer = ByteBufferUtils.expand(netInBuffer, newLimit);
-            sc.read(netInBuffer);
-            extractor = new TLSClientHelloExtractor(netInBuffer);
+            sc.read(netInBuffer, Nio2Endpoint.toNio2Timeout(endpoint.getConnectionTimeout()),
+                    TimeUnit.MILLISECONDS, socket, handshakeReadCompletionHandler);
+            return 1;
         }
 
         String hostName = null;
         List<Cipher> clientRequestedCiphers = null;
+        List<String> clientRequestedApplicationProtocols = null;
         switch (extractor.getResult()) {
         case COMPLETE:
             hostName = extractor.getSNIValue();
+            clientRequestedApplicationProtocols =
+                    extractor.getClientRequestedApplicationProtocols();
             //$FALL-THROUGH$ to set the client requested ciphers
         case NOT_PRESENT:
             clientRequestedCiphers = extractor.getClientRequestedCiphers();
             break;
         case NEED_READ:
-            sc.read(netInBuffer, socket, handshakeReadCompletionHandler);
+            sc.read(netInBuffer, Nio2Endpoint.toNio2Timeout(endpoint.getConnectionTimeout()),
+                    TimeUnit.MILLISECONDS, socket, handshakeReadCompletionHandler);
             return 1;
         case UNDERFLOW:
             // Unable to buffer enough data to read SNI extension data
@@ -368,13 +416,20 @@ public class SecureNio2Channel extends Nio2Channel  {
             hostName = endpoint.getDefaultSSLHostConfigName();
             clientRequestedCiphers = Collections.emptyList();
             break;
+        case NON_SECURE:
+            netOutBuffer.clear();
+            netOutBuffer.put(TLSClientHelloExtractor.USE_TLS_RESPONSE);
+            netOutBuffer.flip();
+            flush();
+            throw new IOException(sm.getString("channel.nio.ssl.foundHttp"));
         }
 
         if (log.isDebugEnabled()) {
-            log.debug(sm.getString("channel.nio.ssl.sniHostName", hostName));
+            log.debug(sm.getString("channel.nio.ssl.sniHostName", sc, hostName));
         }
 
-        sslEngine = endpoint.createSSLEngine(hostName, clientRequestedCiphers);
+        sslEngine = endpoint.createSSLEngine(hostName, clientRequestedCiphers,
+                clientRequestedApplicationProtocols);
 
         // Ensure the application buffers (which have to be created earlier) are
         // big enough.
@@ -435,8 +490,10 @@ public class SecureNio2Channel extends Nio2Channel  {
                 }
             }
         } catch (IOException x) {
+            closeSilently();
             throw x;
         } catch (Exception cx) {
+            closeSilently();
             IOException x = new IOException(cx);
             throw x;
         }
@@ -480,10 +537,6 @@ public class SecureNio2Channel extends Nio2Channel  {
      * @throws IOException An IO error occurred
      */
     protected SSLEngineResult handshakeUnwrap() throws IOException {
-        if (netInBuffer.position() == netInBuffer.limit()) {
-            //clear the buffer if we have emptied it out on data
-            netInBuffer.clear();
-        }
         SSLEngineResult result;
         boolean cont = false;
         //loop while we can perform pure SSLEngine data
@@ -525,10 +578,17 @@ public class SecureNio2Channel extends Nio2Channel  {
         if (closing) return;
         closing = true;
         sslEngine.closeOutbound();
+        long timeout = endpoint.getConnectionTimeout();
 
         try {
-            if (!flush().get(endpoint.getSoTimeout(), TimeUnit.MILLISECONDS).booleanValue()) {
-                throw new IOException(sm.getString("channel.nio.ssl.remainingDataDuringClose"));
+            if (timeout > 0) {
+                if (!flush().get(timeout, TimeUnit.MILLISECONDS).booleanValue()) {
+                    throw new IOException(sm.getString("channel.nio.ssl.remainingDataDuringClose"));
+                }
+            } else {
+                if (!flush().get().booleanValue()) {
+                    throw new IOException(sm.getString("channel.nio.ssl.remainingDataDuringClose"));
+                }
             }
         } catch (InterruptedException | ExecutionException | TimeoutException e) {
             throw new IOException(sm.getString("channel.nio.ssl.remainingDataDuringClose"), e);
@@ -547,8 +607,14 @@ public class SecureNio2Channel extends Nio2Channel  {
         netOutBuffer.flip();
         //if there is data to be written
         try {
-            if (!flush().get(endpoint.getSoTimeout(), TimeUnit.MILLISECONDS).booleanValue()) {
-                throw new IOException(sm.getString("channel.nio.ssl.remainingDataDuringClose"));
+            if (timeout > 0) {
+                if (!flush().get(timeout, TimeUnit.MILLISECONDS).booleanValue()) {
+                    throw new IOException(sm.getString("channel.nio.ssl.remainingDataDuringClose"));
+                }
+            } else {
+                if (!flush().get().booleanValue()) {
+                    throw new IOException(sm.getString("channel.nio.ssl.remainingDataDuringClose"));
+                }
             }
         } catch (InterruptedException | ExecutionException | TimeoutException e) {
             throw new IOException(sm.getString("channel.nio.ssl.remainingDataDuringClose"), e);
@@ -560,17 +626,30 @@ public class SecureNio2Channel extends Nio2Channel  {
         closed = (!netOutBuffer.hasRemaining() && (handshake.getHandshakeStatus() != HandshakeStatus.NEED_WRAP));
     }
 
+
     @Override
     public void close(boolean force) throws IOException {
         try {
             close();
         } finally {
-            if ( force || closed ) {
+            if (force || closed) {
                 closed = true;
                 sc.close();
             }
         }
     }
+
+
+    private void closeSilently() {
+        try {
+            close(true);
+        } catch (IOException ioe) {
+            // This is expected - swallowing the exception is the reason this
+            // method exists. Log at debug in case someone is interested.
+            log.debug(sm.getString("channel.nio.ssl.closeSilentError"), ioe);
+        }
+    }
+
 
     private class FutureRead implements Future<Integer> {
         private ByteBuffer dst;
@@ -855,6 +934,10 @@ public class SecureNio2Channel extends Nio2Channel  {
                                         getBufHandler().expand(
                                                 sslEngine.getSession().getApplicationBufferSize());
                                         dst2 = getBufHandler().getReadBuffer();
+                                    } else if (dst2 == getAppReadBufHandler().getByteBuffer()) {
+                                        getAppReadBufHandler()
+                                                .expand(sslEngine.getSession().getApplicationBufferSize());
+                                        dst2 = getAppReadBufHandler().getByteBuffer();
                                     } else {
                                         // Can't expand the buffer as there is no way to signal
                                         // to the caller that the buffer has been replaced.
@@ -1099,10 +1182,4 @@ public class SecureNio2Channel extends Nio2Channel  {
     public ByteBuffer getEmptyBuf() {
         return emptyBuf;
     }
-
-    @Override
-    public AsynchronousSocketChannel getIOChannel() {
-        return sc;
-    }
-
 }

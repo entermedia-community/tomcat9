@@ -138,7 +138,7 @@ public class TestContextConfig extends TomcatBaseTest {
         tomcat.start();
 
         assertPageContains("/test/testServlet",
-                "envEntry1: 1 envEntry2: 2 envEntry3: 33 envEntry4: 4 envEntry5: 55 envEntry6: 66");
+                "envEntry1: 0 envEntry2: 2 envEntry3: 33 envEntry4: 0 envEntry5: 55 envEntry6: 66");
     }
 
     @Test
@@ -199,7 +199,7 @@ public class TestContextConfig extends TomcatBaseTest {
 
         if (expectedStatus == HttpServletResponse.SC_OK) {
             String result = res.toString();
-            Assert.assertTrue(result, result.indexOf(expectedBody) > -1);
+            Assert.assertTrue(result, result.contains(expectedBody));
         }
     }
 

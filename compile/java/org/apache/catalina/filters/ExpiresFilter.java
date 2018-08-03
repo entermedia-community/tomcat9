@@ -47,7 +47,7 @@ import org.apache.juli.logging.LogFactory;
 /**
  * <p>
  * ExpiresFilter is a Java Servlet API port of <a
- * href="http://httpd.apache.org/docs/2.2/mod/mod_expires.html">Apache
+ * href="https://httpd.apache.org/docs/2.2/mod/mod_expires.html">Apache
  * mod_expires</a> to add '{@code Expires}' and
  * '{@code Cache-Control: max-age=}' headers to HTTP response according to its
  * '{@code Content-Type}'.
@@ -55,7 +55,7 @@ import org.apache.juli.logging.LogFactory;
  *
  * <p>
  * Following documentation is inspired by <a
- * href="http://httpd.apache.org/docs/2.2/mod/mod_expires.html">mod_expires</a>
+ * href="https://httpd.apache.org/docs/2.2/mod/mod_expires.html">mod_expires</a>
  * </p>
  * <h1>Summary</h1>
  * <p>
@@ -75,7 +75,7 @@ import org.apache.juli.logging.LogFactory;
  * To modify {@code Cache-Control} directives other than {@code max-age} (see
  * <a href="http://www.w3.org/Protocols/rfc2616/rfc2616-sec14.html#sec14.9" >RFC
  * 2616 section 14.9</a>), you can use other servlet filters or <a
- * href="http://httpd.apache.org/docs/2.2/mod/mod_headers.html" >Apache Httpd
+ * href="https://httpd.apache.org/docs/2.2/mod/mod_headers.html" >Apache Httpd
  * mod_headers</a> module.
  * </p>
  * <h1>Filter Configuration</h1><h2>Basic configuration to add
@@ -464,14 +464,14 @@ public class ExpiresFilter extends FilterBase {
         DAY(Calendar.DAY_OF_YEAR), HOUR(Calendar.HOUR), MINUTE(Calendar.MINUTE), MONTH(
                 Calendar.MONTH), SECOND(Calendar.SECOND), WEEK(
                 Calendar.WEEK_OF_YEAR), YEAR(Calendar.YEAR);
-        private final int calendardField;
+        private final int calendarField;
 
-        private DurationUnit(int calendardField) {
-            this.calendardField = calendardField;
+        private DurationUnit(int calendarField) {
+            this.calendarField = calendarField;
         }
 
         public int getCalendardField() {
-            return calendardField;
+            return calendarField;
         }
 
     }
@@ -1050,7 +1050,9 @@ public class ExpiresFilter extends FilterBase {
 
     private static final String HEADER_LAST_MODIFIED = "Last-Modified";
 
-    private static final Log log = LogFactory.getLog(ExpiresFilter.class);
+    // Log must be non-static as loggers are created per class-loader and this
+    // Filter may be used in multiple class loaders
+    private final Log log = LogFactory.getLog(ExpiresFilter.class); // must not be static
 
     private static final String PARAMETER_EXPIRES_BY_TYPE = "ExpiresByType";
 
@@ -1104,7 +1106,7 @@ public class ExpiresFilter extends FilterBase {
         if (str == null || searchStr == null) {
             return false;
         }
-        return str.indexOf(searchStr) >= 0;
+        return str.contains(searchStr);
     }
 
     /**
@@ -1267,6 +1269,9 @@ public class ExpiresFilter extends FilterBase {
      */
     protected Date getExpirationDate(XHttpServletResponse response) {
         String contentType = response.getContentType();
+        if (contentType != null) {
+            contentType = contentType.toLowerCase(Locale.ENGLISH);
+        }
 
         // lookup exact content-type match (e.g.
         // "text/html; charset=iso-8859-1")
@@ -1396,7 +1401,7 @@ public class ExpiresFilter extends FilterBase {
             try {
                 if (name.startsWith(PARAMETER_EXPIRES_BY_TYPE)) {
                     String contentType = name.substring(
-                            PARAMETER_EXPIRES_BY_TYPE.length()).trim();
+                            PARAMETER_EXPIRES_BY_TYPE.length()).trim().toLowerCase(Locale.ENGLISH);
                     ExpiresConfiguration expiresConfiguration = parseExpiresConfiguration(value);
                     this.expiresConfigurationByContentType.put(contentType,
                             expiresConfiguration);

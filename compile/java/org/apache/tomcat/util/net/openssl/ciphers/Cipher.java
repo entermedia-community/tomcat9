@@ -2695,7 +2695,96 @@ public enum Cipher {
             null
     ),
 
-    /* Cipher 0x00FF  TLS_EMPTY_RENEGOTIATION_INFO_SCSV
+    // Cipher 0x00FF  TLS_EMPTY_RENEGOTIATION_INFO_SCSV
+
+    // TLS 1.3 ciphers (draft - v26)
+    // Cipher 1301
+    TLS_AES_128_GCM_SHA256(
+            0x1301,
+            "TLS_AES_128_GCM_SHA256",
+            KeyExchange.ANY,
+            Authentication.ANY,
+            Encryption.AES128GCM,
+            MessageDigest.AEAD,
+            Protocol.TLSv1_3,
+            false,
+            EncryptionLevel.HIGH,
+            true,
+            128,
+            128,
+            null,
+            null
+    ),
+    // Cipher 1302
+    TLS_AES_256_GCM_SHA384(
+            0x1302,
+            "TLS_AES_256_GCM_SHA384",
+            KeyExchange.ANY,
+            Authentication.ANY,
+            Encryption.AES256GCM,
+            MessageDigest.AEAD,
+            Protocol.TLSv1_3,
+            false,
+            EncryptionLevel.HIGH,
+            true,
+            256,
+            256,
+            null,
+            null
+    ),
+    // Cipher 1303
+    TLS_CHACHA20_POLY1305_SHA256(
+            0x1303,
+            "TLS_CHACHA20_POLY1305_SHA256",
+            KeyExchange.ANY,
+            Authentication.ANY,
+            Encryption.CHACHA20POLY1305,
+            MessageDigest.AEAD,
+            Protocol.TLSv1_3,
+            false,
+            EncryptionLevel.HIGH,
+            true,
+            256,
+            256,
+            null,
+            null
+    ),
+    // Cipher 1304
+    TLS_AES_128_CCM_SHA256(
+            0x1304,
+            "TLS_AES_128_CCM_SHA256",
+            KeyExchange.ANY,
+            Authentication.ANY,
+            Encryption.AES128CCM,
+            MessageDigest.AEAD,
+            Protocol.TLSv1_3,
+            false,
+            EncryptionLevel.HIGH,
+            true,
+            128,
+            128,
+            null,
+            null
+    ),
+    // Cipher 1305
+    TLS_AES_128_CCM_8_SHA256(
+            0x1305,
+            "TLS_AES_128_CCM_8_SHA256",
+            KeyExchange.ANY,
+            Authentication.ANY,
+            Encryption.AES128CCM8,
+            MessageDigest.AEAD,
+            Protocol.TLSv1_3,
+            false,
+            EncryptionLevel.HIGH,
+            true,
+            128,
+            128,
+            null,
+            null
+    ),
+
+    /*
      * Cipher 0x5600  TLS_FALLBACK_SCSV
      *
      * No other ciphers defined until 0xC001 below
@@ -2728,7 +2817,7 @@ public enum Cipher {
             Authentication.ECDH,
             Encryption.RC4,
             MessageDigest.SHA1,
-            Protocol.SSLv3,
+            Protocol.TLSv1,
             false,
             EncryptionLevel.MEDIUM,
             false,
@@ -2796,7 +2885,7 @@ public enum Cipher {
             Authentication.ECDSA,
             Encryption.eNULL,
             MessageDigest.SHA1,
-            Protocol.SSLv3,
+            Protocol.TLSv1,
             false,
             EncryptionLevel.STRONG_NONE,
             true,
@@ -2830,7 +2919,7 @@ public enum Cipher {
             Authentication.ECDSA,
             Encryption.TRIPLE_DES,
             MessageDigest.SHA1,
-            Protocol.SSLv3,
+            Protocol.TLSv1,
             false,
             EncryptionLevel.MEDIUM,
             true,
@@ -2847,7 +2936,7 @@ public enum Cipher {
             Authentication.ECDSA,
             Encryption.AES128,
             MessageDigest.SHA1,
-            Protocol.SSLv3,
+            Protocol.TLSv1,
             false,
             EncryptionLevel.HIGH,
             true,
@@ -2864,7 +2953,7 @@ public enum Cipher {
             Authentication.ECDSA,
             Encryption.AES256,
             MessageDigest.SHA1,
-            Protocol.SSLv3,
+            Protocol.TLSv1,
             false,
             EncryptionLevel.HIGH,
             true,
@@ -2966,7 +3055,7 @@ public enum Cipher {
             Authentication.RSA,
             Encryption.eNULL,
             MessageDigest.SHA1,
-            Protocol.SSLv3,
+            Protocol.TLSv1,
             false,
             EncryptionLevel.STRONG_NONE,
             true,
@@ -2983,7 +3072,7 @@ public enum Cipher {
             Authentication.RSA,
             Encryption.RC4,
             MessageDigest.SHA1,
-            Protocol.SSLv3,
+            Protocol.TLSv1,
             false,
             EncryptionLevel.MEDIUM,
             false,
@@ -3000,7 +3089,7 @@ public enum Cipher {
             Authentication.RSA,
             Encryption.TRIPLE_DES,
             MessageDigest.SHA1,
-            Protocol.SSLv3,
+            Protocol.TLSv1,
             false,
             EncryptionLevel.MEDIUM,
             true,
@@ -3017,7 +3106,7 @@ public enum Cipher {
             Authentication.RSA,
             Encryption.AES128,
             MessageDigest.SHA1,
-            Protocol.SSLv3,
+            Protocol.TLSv1,
             false,
             EncryptionLevel.HIGH,
             true,
@@ -3034,7 +3123,7 @@ public enum Cipher {
             Authentication.RSA,
             Encryption.AES256,
             MessageDigest.SHA1,
-            Protocol.SSLv3,
+            Protocol.TLSv1,
             false,
             EncryptionLevel.HIGH,
             true,
@@ -3051,7 +3140,7 @@ public enum Cipher {
             Authentication.aNULL,
             Encryption.eNULL,
             MessageDigest.SHA1,
-            Protocol.SSLv3,
+            Protocol.TLSv1,
             false,
             EncryptionLevel.STRONG_NONE,
             true,
@@ -3068,7 +3157,7 @@ public enum Cipher {
             Authentication.aNULL,
             Encryption.RC4,
             MessageDigest.SHA1,
-            Protocol.SSLv3,
+            Protocol.TLSv1,
             false,
             EncryptionLevel.MEDIUM,
             false,
@@ -3085,7 +3174,7 @@ public enum Cipher {
             Authentication.aNULL,
             Encryption.TRIPLE_DES,
             MessageDigest.SHA1,
-            Protocol.SSLv3,
+            Protocol.TLSv1,
             false,
             EncryptionLevel.MEDIUM,
             true,
@@ -3102,7 +3191,7 @@ public enum Cipher {
             Authentication.aNULL,
             Encryption.AES128,
             MessageDigest.SHA1,
-            Protocol.SSLv3,
+            Protocol.TLSv1,
             false,
             EncryptionLevel.HIGH,
             true,
@@ -3119,7 +3208,7 @@ public enum Cipher {
             Authentication.aNULL,
             Encryption.AES256,
             MessageDigest.SHA1,
-            Protocol.SSLv3,
+            Protocol.TLSv1,
             false,
             EncryptionLevel.HIGH,
             true,
@@ -3564,7 +3653,7 @@ public enum Cipher {
             Authentication.PSK,
             Encryption.RC4,
             MessageDigest.SHA1,
-            Protocol.SSLv3,
+            Protocol.TLSv1,
             false,
             EncryptionLevel.MEDIUM,
             false,
@@ -3581,7 +3670,7 @@ public enum Cipher {
             Authentication.PSK,
             Encryption.TRIPLE_DES,
             MessageDigest.SHA1,
-            Protocol.SSLv3,
+            Protocol.TLSv1,
             false,
             EncryptionLevel.MEDIUM,
             true,
@@ -3598,7 +3687,7 @@ public enum Cipher {
             Authentication.PSK,
             Encryption.AES128,
             MessageDigest.SHA1,
-            Protocol.SSLv3,
+            Protocol.TLSv1,
             false,
             EncryptionLevel.HIGH,
             true,
@@ -3615,7 +3704,7 @@ public enum Cipher {
             Authentication.PSK,
             Encryption.AES256,
             MessageDigest.SHA1,
-            Protocol.SSLv3,
+            Protocol.TLSv1,
             false,
             EncryptionLevel.HIGH,
             true,
@@ -3664,7 +3753,7 @@ public enum Cipher {
             Authentication.PSK,
             Encryption.eNULL,
             MessageDigest.SHA1,
-            Protocol.SSLv3,
+            Protocol.TLSv1,
             false,
             EncryptionLevel.STRONG_NONE,
             true,
@@ -3706,9 +3795,291 @@ public enum Cipher {
             null
     ),
 
-    /* ARIA ciphers 0xC03C to 0xC071
+    /* ARIA ciphers 0xC03C to 0xC04F
      * Unsupported by both Java and OpenSSL
      */
+
+    TLS_RSA_WITH_ARIA_128_GCM_SHA256(
+            0xC050,
+            "ARIA128-GCM-SHA256",
+            KeyExchange.RSA,
+            Authentication.RSA,
+            Encryption.ARIA128GCM,
+            MessageDigest.AEAD,
+            Protocol.TLSv1_2,
+            false,
+            EncryptionLevel.HIGH,
+            false,
+            128,
+            128,
+            null,
+            null
+    ),
+    TLS_RSA_WITH_ARIA_256_GCM_SHA384(
+            0xC051,
+            "ARIA256-GCM-SHA384",
+            KeyExchange.RSA,
+            Authentication.RSA,
+            Encryption.ARIA256GCM,
+            MessageDigest.AEAD,
+            Protocol.TLSv1_2,
+            false,
+            EncryptionLevel.HIGH,
+            false,
+            256,
+            256,
+            null,
+            null
+    ),
+    TLS_DHE_RSA_WITH_ARIA_128_GCM_SHA256(
+            0xC052,
+            "DHE-RSA-ARIA128-GCM-SHA256",
+            KeyExchange.EDH,
+            Authentication.RSA,
+            Encryption.ARIA128GCM,
+            MessageDigest.AEAD,
+            Protocol.TLSv1_2,
+            false,
+            EncryptionLevel.HIGH,
+            false,
+            128,
+            128,
+            null,
+            null
+    ),
+    TLS_DHE_RSA_WITH_ARIA_256_GCM_SHA384(
+            0xC053,
+            "DHE-RSA-ARIA256-GCM-SHA384",
+            KeyExchange.EDH,
+            Authentication.RSA,
+            Encryption.ARIA256GCM,
+            MessageDigest.AEAD,
+            Protocol.TLSv1_2,
+            false,
+            EncryptionLevel.HIGH,
+            false,
+            256,
+            256,
+            null,
+            null
+    ),
+
+    /* ARIA ciphers 0xC054 to 0xC055
+     * Unsupported by both Java and OpenSSL
+     */
+
+    TLS_DHE_DSS_WITH_ARIA_128_GCM_SHA256(
+            0xC056,
+            "DHE-DSS-ARIA128-GCM-SHA256",
+            KeyExchange.EDH,
+            Authentication.DSS,
+            Encryption.ARIA128GCM,
+            MessageDigest.AEAD,
+            Protocol.TLSv1_2,
+            false,
+            EncryptionLevel.HIGH,
+            false,
+            128,
+            128,
+            null,
+            null
+    ),
+    TLS_DHE_DSS_WITH_ARIA_256_GCM_SHA384(
+            0xC057,
+            "DHE-DSS-ARIA256-GCM-SHA384",
+            KeyExchange.EDH,
+            Authentication.DSS,
+            Encryption.ARIA256GCM,
+            MessageDigest.AEAD,
+            Protocol.TLSv1_2,
+            false,
+            EncryptionLevel.HIGH,
+            false,
+            256,
+            256,
+            null,
+            null
+    ),
+
+    /* ARIA ciphers 0xC058 to 0xC05B
+     * Unsupported by both Java and OpenSSL
+     */
+
+    TLS_ECDHE_ECDSA_WITH_ARIA_128_GCM_SHA256(
+            0xC05C,
+            "ECDHE-ECDSA-ARIA128-GCM-SHA256",
+            KeyExchange.EECDH,
+            Authentication.ECDSA,
+            Encryption.ARIA128GCM,
+            MessageDigest.AEAD,
+            Protocol.TLSv1_2,
+            false,
+            EncryptionLevel.HIGH,
+            false,
+            128,
+            128,
+            null,
+            null
+    ),
+    TLS_ECDHE_ECDSA_WITH_ARIA_256_GCM_SHA384(
+            0xC05D,
+            "ECDHE-ECDSA-ARIA256-GCM-SHA384",
+            KeyExchange.EECDH,
+            Authentication.ECDSA,
+            Encryption.ARIA256GCM,
+            MessageDigest.AEAD,
+            Protocol.TLSv1_2,
+            false,
+            EncryptionLevel.HIGH,
+            false,
+            256,
+            256,
+            null,
+            null
+    ),
+
+    /* ARIA ciphers 0xC05E to 0xC05F
+     * Unsupported by both Java and OpenSSL
+     */
+
+    TLS_ECDHE_RSA_WITH_ARIA_128_GCM_SHA256(
+            0xC060,
+            "ECDHE-ARIA128-GCM-SHA256",
+            KeyExchange.EECDH,
+            Authentication.RSA,
+            Encryption.ARIA128GCM,
+            MessageDigest.AEAD,
+            Protocol.TLSv1_2,
+            false,
+            EncryptionLevel.HIGH,
+            false,
+            128,
+            128,
+            null,
+            null
+    ),
+    TLS_ECDHE_RSA_WITH_ARIA_256_GCM_SHA384(
+            0xC061,
+            "ECDHE-ARIA256-GCM-SHA384",
+            KeyExchange.EECDH,
+            Authentication.RSA,
+            Encryption.ARIA256GCM,
+            MessageDigest.AEAD,
+            Protocol.TLSv1_2,
+            false,
+            EncryptionLevel.HIGH,
+            false,
+            256,
+            256,
+            null,
+            null
+    ),
+
+    /* ARIA ciphers 0xC062 to 0xC069
+     * Unsupported by both Java and OpenSSL
+     */
+
+    TLS_PSK_WITH_ARIA_128_GCM_SHA256(
+            0xC06A,
+            "PSK-ARIA128-GCM-SHA256",
+            KeyExchange.PSK,
+            Authentication.PSK,
+            Encryption.ARIA128GCM,
+            MessageDigest.AEAD,
+            Protocol.TLSv1_2,
+            false,
+            EncryptionLevel.HIGH,
+            false,
+            128,
+            128,
+            null,
+            null
+    ),
+    TLS_PSK_WITH_ARIA_256_GCM_SHA384(
+            0xC06B,
+            "PSK-ARIA256-GCM-SHA384",
+            KeyExchange.PSK,
+            Authentication.PSK,
+            Encryption.ARIA256GCM,
+            MessageDigest.AEAD,
+            Protocol.TLSv1_2,
+            false,
+            EncryptionLevel.HIGH,
+            false,
+            256,
+            256,
+            null,
+            null
+    ),
+    TLS_DHE_PSK_WITH_ARIA_128_GCM_SHA256(
+            0xC06C,
+            "DHE-PSK-ARIA128-GCM-SHA256",
+            KeyExchange.DHEPSK,
+            Authentication.PSK,
+            Encryption.ARIA128GCM,
+            MessageDigest.AEAD,
+            Protocol.TLSv1_2,
+            false,
+            EncryptionLevel.HIGH,
+            false,
+            128,
+            128,
+            null,
+            null
+    ),
+    TLS_DHE_PSK_WITH_ARIA_256_GCM_SHA384(
+            0xC06D,
+            "DHE-PSK-ARIA256-GCM-SHA384",
+            KeyExchange.DHEPSK,
+            Authentication.PSK,
+            Encryption.ARIA256GCM,
+            MessageDigest.AEAD,
+            Protocol.TLSv1_2,
+            false,
+            EncryptionLevel.HIGH,
+            false,
+            256,
+            256,
+            null,
+            null
+    ),
+    TLS_RSA_PSK_WITH_ARIA_128_GCM_SHA256(
+            0xC06E,
+            "RSA-PSK-ARIA128-GCM-SHA256",
+            KeyExchange.RSAPSK,
+            Authentication.RSA,
+            Encryption.ARIA128GCM,
+            MessageDigest.AEAD,
+            Protocol.TLSv1_2,
+            false,
+            EncryptionLevel.HIGH,
+            false,
+            128,
+            128,
+            null,
+            null
+    ),
+    TLS_RSA_PSK_WITH_ARIA_256_GCM_SHA384(
+            0xC06F,
+            "RSA-PSK-ARIA256-GCM-SHA384",
+            KeyExchange.RSAPSK,
+            Authentication.RSA,
+            Encryption.ARIA256GCM,
+            MessageDigest.AEAD,
+            Protocol.TLSv1_2,
+            false,
+            EncryptionLevel.HIGH,
+            false,
+            256,
+            256,
+            null,
+            null
+    ),
+
+    /* ARIA ciphers 0xC070 to 0xC071
+     * Unsupported by both Java and OpenSSL
+     */
+
     // Cipher C072
     TLS_ECDHE_ECDSA_WITH_CAMELLIA_128_CBC_SHA256(
             0xC072,

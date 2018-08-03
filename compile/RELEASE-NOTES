@@ -47,12 +47,12 @@ API Stability:
 
 The public interfaces for the following classes are fixed and will not be
 changed at all during the remaining lifetime of the @VERSION_MAJOR@.x series:
-- None
+- All classes in the javax namespace
 
 The public interfaces for the following classes may be added to in order to
 resolve bugs and/or add new features. No existing interface method will be
 removed or changed although it may be deprecated.
-- None
+- org.apache.catalina.* (excluding sub-packages)
 
 Note: As Tomcat @VERSION_MAJOR@ matures, the above list will be added to. The list is not
       considered complete at this time.
@@ -93,7 +93,8 @@ or by placing them in JAR files in the "lib" directory.
 
 To override the XML parser implementation or interfaces, use the appropriate
 feature for your JVM. For Java <= 8 use the endorsed standards override
-feature. For Java 9+ use the upgradeable modules feature.
+feature. The default configuration defines JARs located in "endorsed" as endorsed.
+For Java 9+ use the upgradeable modules feature.
 
 
 ================================================================
@@ -133,7 +134,7 @@ the check.
 ==============================
 Viewing the Tomcat Change Log:
 ==============================
-The full change log is available from http://tomcat.apache.org and is also
+The full change log is available from https://tomcat.apache.org and is also
 included in the documentation web application.
 
 
@@ -169,4 +170,4 @@ software:
 When all else fails:
 ====================
 See the FAQ
-http://tomcat.apache.org/faq/
+https://tomcat.apache.org/faq/

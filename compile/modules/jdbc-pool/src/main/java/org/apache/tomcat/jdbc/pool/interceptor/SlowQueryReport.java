@@ -104,9 +104,9 @@ public class SlowQueryReport extends AbstractQueryReport  {
             QueryStats qs = this.getQueryStats(sql);
             if (qs != null) {
                 qs.failure(delta, now);
-                if (isLogFailed() && log.isWarnEnabled()) {
-                    log.warn("Failed Query Report SQL="+sql+"; time="+delta+" ms;");
-                }
+            }
+            if (isLogFailed() && log.isWarnEnabled()) {
+                log.warn("Failed Query Report SQL="+sql+"; time="+delta+" ms;");
             }
         }
         return sql;
@@ -479,7 +479,8 @@ public class SlowQueryReport extends AbstractQueryReport  {
      * have never been updated, have a lastInvocation value of {@code 0}
      * which should be handled as the newest possible invocation.
      */
-    private static class QueryStatsComparator implements Comparator<QueryStats> {
+    // Public for unit tests
+    public static class QueryStatsComparator implements Comparator<QueryStats> {
 
         @Override
         public int compare(QueryStats stats1, QueryStats stats2) {

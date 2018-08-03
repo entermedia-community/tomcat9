@@ -19,6 +19,7 @@ package org.apache.catalina.nonblocking;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.Serializable;
 import java.net.HttpURLConnection;
 import java.net.Socket;
 import java.net.URL;
@@ -36,6 +37,7 @@ import javax.net.SocketFactory;
 import javax.servlet.AsyncContext;
 import javax.servlet.AsyncEvent;
 import javax.servlet.AsyncListener;
+import javax.servlet.DispatcherType;
 import javax.servlet.ReadListener;
 import javax.servlet.ServletException;
 import javax.servlet.ServletInputStream;
@@ -50,7 +52,6 @@ import org.junit.Ignore;
 import org.junit.Test;
 
 import org.apache.catalina.Context;
-import org.apache.catalina.core.StandardContext;
 import org.apache.catalina.startup.BytesStreamer;
 import org.apache.catalina.startup.TesterServlet;
 import org.apache.catalina.startup.Tomcat;
@@ -99,9 +100,8 @@ public class TestNonBlockingAPI extends TomcatBaseTest {
     private void doTestNonBlockingRead(boolean ignoreIsReady) throws Exception {
         Tomcat tomcat = getTomcatInstance();
 
-        // Must have a real docBase - just use temp
-        StandardContext ctx = (StandardContext) tomcat.addContext("",
-                System.getProperty("java.io.tmpdir"));
+        // No file system docBase required
+        Context ctx = tomcat.addContext("", null);
 
         NBReadServlet servlet = new NBReadServlet(ignoreIsReady);
         String servletName = NBReadServlet.class.getName();
@@ -154,7 +154,13 @@ public class TestNonBlockingAPI extends TomcatBaseTest {
                     "Host: localhost:" + getPort() + "\r\n" +
                     "\r\n").getBytes(StandardCharsets.ISO_8859_1));
             os.flush();
-            is.read(buffer);
+            // Make sure the entire response has been read.
+            int read = is.read(buffer);
+            // The response should end with CRLFCRLF
+            Assert.assertEquals(buffer[read - 4], '\r');
+            Assert.assertEquals(buffer[read - 3], '\n');
+            Assert.assertEquals(buffer[read - 2], '\r');
+            Assert.assertEquals(buffer[read - 1], '\n');
         }
         os.write(("GET / HTTP/1.1\r\n" +
                 "Host: localhost:" + getPort() + "\r\n" +
@@ -269,7 +275,7 @@ public class TestNonBlockingAPI extends TomcatBaseTest {
                 }
             }
 
-            Assert.assertTrue(line.endsWith("\r\n"));
+            Assert.assertTrue(line, line.endsWith("\r\n"));
             Assert.assertEquals(chunkSize + 2, line.length());
 
             totalBodyRead += chunkSize;
@@ -402,11 +408,11 @@ public class TestNonBlockingAPI extends TomcatBaseTest {
 
 
     public static class DataWriter implements BytesStreamer {
-        final int max = 5;
+        private static final int MAX = 5;
         int count = 0;
         long delay = 0;
-        byte[] b = "WANTMORE".getBytes();
-        byte[] f = "FINISHED".getBytes();
+        byte[] b = "WANTMORE".getBytes(StandardCharsets.ISO_8859_1);
+        byte[] f = "FINISHED".getBytes(StandardCharsets.ISO_8859_1);
 
         public DataWriter(long delay) {
             this.delay = delay;
@@ -414,12 +420,12 @@ public class TestNonBlockingAPI extends TomcatBaseTest {
 
         @Override
         public int getLength() {
-            return b.length * max;
+            return b.length * MAX;
         }
 
         @Override
         public int available() {
-            if (count < max) {
+            if (count < MAX) {
                 return b.length;
             } else {
                 return 0;
@@ -428,7 +434,7 @@ public class TestNonBlockingAPI extends TomcatBaseTest {
 
         @Override
         public byte[] next() {
-            if (count < max) {
+            if (count < MAX) {
                 if (count > 0)
                     try {
                         if (delay > 0)
@@ -436,7 +442,7 @@ public class TestNonBlockingAPI extends TomcatBaseTest {
                     } catch (Exception x) {
                     }
                 count++;
-                if (count < max)
+                if (count < MAX)
                     return b;
                 else
                     return f;
@@ -843,7 +849,7 @@ public class TestNonBlockingAPI extends TomcatBaseTest {
     private static final class DelayedNBWriteServlet extends TesterServlet {
         private static final long serialVersionUID = 1L;
         private final Set<Emitter> emitters = new HashSet<>();
-        private final CountDownLatch latch;
+        private final transient CountDownLatch latch;
 
         public DelayedNBWriteServlet(CountDownLatch latch) {
             this.latch = latch;
@@ -870,8 +876,11 @@ public class TestNonBlockingAPI extends TomcatBaseTest {
 
     }
 
-    private static final class Emitter {
-        private final AsyncContext ctx;
+    private static final class Emitter implements Serializable {
+
+        private static final long serialVersionUID = 1L;
+
+        private final transient AsyncContext ctx;
 
         Emitter(AsyncContext ctx) {
             this.ctx = ctx;
@@ -903,7 +912,89 @@ public class TestNonBlockingAPI extends TomcatBaseTest {
 
             });
         }
-
     }
 
+
+    /*
+     * https://bz.apache.org/bugzilla/show_bug.cgi?id=61932
+     */
+    @Test
+    public void testNonBlockingReadWithDispatch() throws Exception {
+        Tomcat tomcat = getTomcatInstance();
+
+        // No file system docBase required
+        Context ctx = tomcat.addContext("", null);
+
+        NBReadWithDispatchServlet servlet = new NBReadWithDispatchServlet();
+        String servletName = NBReadWithDispatchServlet.class.getName();
+        Tomcat.addServlet(ctx, servletName, servlet);
+        ctx.addServletMappingDecoded("/", servletName);
+
+        tomcat.start();
+
+        Map<String, List<String>> resHeaders = new HashMap<>();
+        int rc = postUrl(true, new DataWriter(500), "http://localhost:" +
+                getPort() + "/", new ByteChunk(), resHeaders, null);
+
+        Assert.assertEquals(HttpServletResponse.SC_OK, rc);
+    }
+
+
+    @WebServlet(asyncSupported = true)
+    private final class NBReadWithDispatchServlet extends TesterServlet {
+
+        private static final long serialVersionUID = 1L;
+
+        @Override
+        protected void doPost(HttpServletRequest req, HttpServletResponse resp)
+                throws ServletException, IOException {
+
+            CountDownLatch latch = new CountDownLatch(1);
+
+            // Dispatch to "/error" will end up here
+            if (req.getDispatcherType().equals(DispatcherType.ASYNC)) {
+                // Return without writing anything. This will generate the
+                // expected 200 response.
+                return;
+            }
+
+            AsyncContext asyncCtx = req.startAsync();
+            ServletInputStream is = req.getInputStream();
+            is.setReadListener(new ReadListener() {
+
+                @Override
+                public void onDataAvailable() {
+
+                    try {
+                        byte buffer[] = new byte[1 * 1024];
+                        while (is.isReady() && !is.isFinished()) {
+                            is.read(buffer);
+                        }
+
+                    } catch (IOException ex) {
+                        ex.printStackTrace();
+                    }
+                }
+
+                @Override
+                public void onAllDataRead() {
+                    latch.countDown();
+                }
+
+                @Override
+                public void onError(Throwable t) {
+                }
+            });
+
+            new Thread(() -> {
+                try {
+                    latch.await();
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
+                asyncCtx.dispatch("/error");
+            }).start();
+
+        }
+    }
 }

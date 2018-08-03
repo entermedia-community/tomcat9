@@ -16,6 +16,8 @@
  */
 package org.apache.catalina.util;
 
+import javax.servlet.http.HttpServletRequest;
+
 /**
  * General purpose request parsing and encoding utility methods.
  *
@@ -25,41 +27,34 @@ package org.apache.catalina.util;
 public final class RequestUtil {
 
     /**
-     * Filter the specified message string for characters that are sensitive
-     * in HTML.  This avoids potential attacks caused by including JavaScript
-     * codes in the request URL that is often reported in error messages.
+     * Build an appropriate return value for
+     * {@link HttpServletRequest#getRequestURL()} based on the provided
+     * request object. Note that this will also work for instances of
+     * {@link javax.servlet.http.HttpServletRequestWrapper}.
      *
-     * @param message The message string to be filtered
+     * @param request The request object for which the URL should be built
      *
-     * @return the filtered message
+     * @return The request URL for the given request object
      */
-    public static String filter(String message) {
-
-        if (message == null) {
-            return null;
+    public static StringBuffer getRequestURL(HttpServletRequest request) {
+        StringBuffer url = new StringBuffer();
+        String scheme = request.getScheme();
+        int port = request.getServerPort();
+        if (port < 0) {
+            // Work around java.net.URL bug
+            port = 80;
         }
 
-        char content[] = new char[message.length()];
-        message.getChars(0, message.length(), content, 0);
-        StringBuilder result = new StringBuilder(content.length + 50);
-        for (int i = 0; i < content.length; i++) {
-            switch (content[i]) {
-            case '<':
-                result.append("&lt;");
-                break;
-            case '>':
-                result.append("&gt;");
-                break;
-            case '&':
-                result.append("&amp;");
-                break;
-            case '"':
-                result.append("&quot;");
-                break;
-            default:
-                result.append(content[i]);
-            }
+        url.append(scheme);
+        url.append("://");
+        url.append(request.getServerName());
+        if ((scheme.equals("http") && (port != 80))
+            || (scheme.equals("https") && (port != 443))) {
+            url.append(':');
+            url.append(port);
         }
-        return result.toString();
+        url.append(request.getRequestURI());
+
+        return url;
     }
 }

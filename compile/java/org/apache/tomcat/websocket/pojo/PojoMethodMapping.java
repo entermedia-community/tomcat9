@@ -197,9 +197,9 @@ public class PojoMethodMapping {
 
 
     private boolean isMethodOverride(Method method1, Method method2) {
-        return (method1.getName().equals(method2.getName())
+        return method1.getName().equals(method2.getName())
                 && method1.getReturnType().equals(method2.getReturnType())
-                && Arrays.equals(method1.getParameterTypes(), method2.getParameterTypes()));
+                && Arrays.equals(method1.getParameterTypes(), method2.getParameterTypes());
     }
 
 
@@ -645,6 +645,7 @@ public class PojoMethodMapping {
                                     "pojoMethodMapping.decodePathParamFail",
                                     valueString, pathParam.getType()), e);
                     params = new Object[] { de };
+                    break;
                 }
                 params[entry.getKey().intValue()] = value;
             }
@@ -722,7 +723,7 @@ public class PojoMethodMapping {
     }
 
 
-    private static enum MethodType {
+    private enum MethodType {
         ON_OPEN,
         ON_CLOSE,
         ON_ERROR

@@ -47,11 +47,6 @@ public class LockOutRealm extends CombinedRealm {
     private static final Log log = LogFactory.getLog(LockOutRealm.class);
 
     /**
-     * Descriptive information about this Realm implementation.
-     */
-    protected static final String name = "LockOutRealm";
-
-    /**
      * The number of times in a row a user has to fail authentication to be
      * locked out. Defaults to 5.
      */
@@ -93,7 +88,7 @@ public class LockOutRealm extends CombinedRealm {
      *  that prevents this component from being used
      */
     @Override
-    protected void startInternal() throws LifecycleException {
+    protected synchronized void startInternal() throws LifecycleException {
         // Configure the list of failed users to delete the oldest entry once it
         // exceeds the specified size
         failedUsers = new LinkedHashMap<String, LockRecord>(cacheSize, 0.75f,
@@ -212,7 +207,7 @@ public class LockOutRealm extends CombinedRealm {
      */
     private Principal filterLockedAccounts(String username, Principal authenticatedUser) {
         // Register all failed authentications
-        if (authenticatedUser == null) {
+        if (authenticatedUser == null && isAvailable()) {
             registerAuthFailure(username);
         }
 
@@ -246,7 +241,7 @@ public class LockOutRealm extends CombinedRealm {
      * a login attempt, then the last access time will be recorded and any
      * attempt to authenticated a locked user will log a warning.
      */
-    private boolean isLocked(String username) {
+    public boolean isLocked(String username) {
         LockRecord lockRecord = null;
         synchronized (this) {
             lockRecord = failedUsers.get(username);
@@ -331,12 +326,6 @@ public class LockOutRealm extends CombinedRealm {
      */
     public int getLockOutTime() {
         return lockOutTime;
-    }
-
-
-    @Override
-    protected String getName() {
-        return name;
     }
 
 

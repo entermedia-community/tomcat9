@@ -65,7 +65,7 @@ public final class Mapper {
     /**
      * Default host name.
      */
-    private String defaultHostName = null;
+    private volatile String defaultHostName = null;
     private volatile MappedHost defaultHost = null;
 
 
@@ -692,12 +692,15 @@ public final class Mapper {
                     MappingData mappingData) throws IOException {
 
         if (host.isNull()) {
+            String defaultHostName = this.defaultHostName;
+            if (defaultHostName == null) {
+                return;
+            }
             host.getCharChunk().append(defaultHostName);
         }
         host.toChars();
         uri.toChars();
-        internalMap(host.getCharChunk(), uri.getCharChunk(), version,
-                mappingData);
+        internalMap(host.getCharChunk(), uri.getCharChunk(), version, mappingData);
     }
 
 
@@ -741,8 +744,6 @@ public final class Mapper {
             throw new AssertionError();
         }
 
-        uri.setLimit(-1);
-
         // Virtual host mapping
         MappedHost[] hosts = this.hosts;
         MappedHost mappedHost = exactFindIgnoreCase(hosts, host);
@@ -768,6 +769,13 @@ public final class Mapper {
             }
         }
         mappingData.host = mappedHost.object;
+
+        if (uri.isNull()) {
+            // Can't map context or wrapper without a uri
+            return;
+        }
+
+        uri.setLimit(-1);
 
         // Context mapping
         ContextList contextList = mappedHost.contextList;
@@ -1207,7 +1215,7 @@ public final class Mapper {
 
         int i = 0;
         while (true) {
-            i = (b + a) / 2;
+            i = (b + a) >>> 1;
             int result = compare(name, start, end, map[i].name);
             if (result == 1) {
                 a = i;
@@ -1262,7 +1270,7 @@ public final class Mapper {
 
         int i = 0;
         while (true) {
-            i = (b + a) / 2;
+            i = (b + a) >>> 1;
             int result = compareIgnoreCase(name, start, end, map[i].name);
             if (result == 1) {
                 a = i;
@@ -1309,7 +1317,7 @@ public final class Mapper {
 
         int i = 0;
         while (true) {
-            i = (b + a) / 2;
+            i = (b + a) >>> 1;
             int result = name.compareTo(map[i].name);
             if (result > 0) {
                 a = i;
@@ -1449,7 +1457,6 @@ public final class Mapper {
      * Find the position of the last slash in the given char chunk.
      */
     private static final int lastSlash(CharChunk name) {
-
         char[] c = name.getBuffer();
         int end = name.getEnd();
         int start = name.getStart();
@@ -1461,8 +1468,7 @@ public final class Mapper {
             }
         }
 
-        return (pos);
-
+        return pos;
     }
 
 
@@ -1470,7 +1476,6 @@ public final class Mapper {
      * Find the position of the nth slash, in the given char chunk.
      */
     private static final int nthSlash(CharChunk name, int n) {
-
         char[] c = name.getBuffer();
         int end = name.getEnd();
         int start = name.getStart();
@@ -1484,8 +1489,7 @@ public final class Mapper {
             }
         }
 
-        return (pos);
-
+        return pos;
     }
 
 
@@ -1544,7 +1548,7 @@ public final class Mapper {
      * wild card host names from the external to internal form.
      */
     private static String renameWildcardHost(String hostName) {
-        if (hostName.startsWith("*.")) {
+        if (hostName != null && hostName.startsWith("*.")) {
             return hostName.substring(1);
         } else {
             return hostName;

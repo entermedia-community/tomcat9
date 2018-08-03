@@ -14,7 +14,6 @@
  *  See the License for the specific language governing permissions and
  *  limitations under the License.
  */
-
 package org.apache.coyote.http11.filters;
 
 import java.io.IOException;
@@ -22,8 +21,8 @@ import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.util.zip.GZIPOutputStream;
 
-import org.apache.coyote.OutputBuffer;
 import org.apache.coyote.Response;
+import org.apache.coyote.http11.HttpOutputBuffer;
 import org.apache.coyote.http11.OutputFilter;
 import org.apache.juli.logging.Log;
 import org.apache.juli.logging.LogFactory;
@@ -35,17 +34,15 @@ import org.apache.juli.logging.LogFactory;
  */
 public class GzipOutputFilter implements OutputFilter {
 
-
     protected static final Log log = LogFactory.getLog(GzipOutputFilter.class);
 
 
     // ----------------------------------------------------- Instance Variables
 
-
     /**
      * Next buffer in the pipeline.
      */
-    protected OutputBuffer buffer;
+    protected HttpOutputBuffer buffer;
 
 
     /**
@@ -90,7 +87,8 @@ public class GzipOutputFilter implements OutputFilter {
     /**
      * Added to allow flushing to happen for the gzip'ed outputstream
      */
-    public void flush() {
+    @Override
+    public void flush() throws IOException {
         if (compressionStream != null) {
             try {
                 if (log.isDebugEnabled()) {
@@ -103,41 +101,30 @@ public class GzipOutputFilter implements OutputFilter {
                 }
             }
         }
+        buffer.flush();
     }
 
-    /**
-     * Some filters need additional parameters from the response. All the
-     * necessary reading can occur in that method, as this method is called
-     * after the response header processing is complete.
-     */
+
     @Override
     public void setResponse(Response response) {
         // NOOP: No need for parameters from response in this filter
     }
 
 
-    /**
-     * Set the next buffer in the filter pipeline.
-     */
     @Override
-    public void setBuffer(OutputBuffer buffer) {
+    public void setBuffer(HttpOutputBuffer buffer) {
         this.buffer = buffer;
     }
 
 
-    /**
-     * End the current request. It is acceptable to write extra bytes using
-     * buffer.doWrite during the execution of this method.
-     */
     @Override
-    public long end()
-        throws IOException {
+    public void end() throws IOException {
         if (compressionStream == null) {
             compressionStream = new GZIPOutputStream(fakeOutputStream, true);
         }
         compressionStream.finish();
         compressionStream.close();
-        return ((OutputFilter) buffer).end();
+        buffer.end();
     }
 
 

@@ -100,7 +100,7 @@ public class ExpandWar {
             if (!warTracker.exists() || warTracker.lastModified() == warLastModified) {
                 // No (detectable) changes to the WAR
                 success = true;
-                return (docBase.getAbsolutePath());
+                return docBase.getAbsolutePath();
             }
 
             // WAR must have been modified. Remove expanded directory.
@@ -157,23 +157,32 @@ public class ExpandWar {
                 }
 
                 try (InputStream input = jarFile.getInputStream(jarEntry)) {
-                    if (null == input)
+                    if (null == input) {
                         throw new ZipException(sm.getString("expandWar.missingJarEntry",
                                 jarEntry.getName()));
+                    }
 
                     // Bugzilla 33636
                     expand(input, expandedFile);
                     long lastModified = jarEntry.getTime();
                     if ((lastModified != -1) && (lastModified != 0)) {
-                        expandedFile.setLastModified(lastModified);
+                        if (!expandedFile.setLastModified(lastModified)) {
+                            throw new IOException(
+                                    sm.getString("expandWar.lastModifiedFailed", expandedFile));
+                        }
                     }
                 }
-
-                // Create the warTracker file and align the last modified time
-                // with the last modified time of the WAR
-                warTracker.createNewFile();
-                warTracker.setLastModified(warLastModified);
             }
+
+            // Create the warTracker file and align the last modified time
+            // with the last modified time of the WAR
+            if (!warTracker.createNewFile()) {
+                throw new IOException(sm.getString("expandWar.createFileFailed", warTracker));
+            }
+            if (!warTracker.setLastModified(warLastModified)) {
+                throw new IOException(sm.getString("expandWar.lastModifiedFailed", warTracker));
+            }
+
             success = true;
         } catch (IOException e) {
             throw e;

@@ -699,8 +699,8 @@ public interface Context extends Container, ContextBind {
     public void setJarScanner(JarScanner jarScanner);
 
     /**
-     * @return the {@link Authenticator} that is used by this context or
-     * <code>null</code> if none is used.
+     * @return the {@link Authenticator} that is used by this context. This is
+     *         always non-{@code null} for a started Context
      */
     public Authenticator getAuthenticator();
 
@@ -969,13 +969,30 @@ public interface Context extends Container, ContextBind {
 
 
     /**
-     * @return the error page entry for the specified Java exception type,
-     * if any; otherwise return <code>null</code>.
-     *
      * @param exceptionType Exception type to look up
+     *
+     * @return the error page entry for the specified Java exception type,
+     *         if any; otherwise return {@code null}.
+     *
+     * @deprecated Unused. Will be removed in Tomcat 10.
+     *             Use {@link #findErrorPage(Throwable)} instead.
      */
+    @Deprecated
     public ErrorPage findErrorPage(String exceptionType);
 
+
+    /**
+     * Find and return the ErrorPage instance for the specified exception's
+     * class, or an ErrorPage instance for the closest superclass for which
+     * there is such a definition.  If no associated ErrorPage instance is
+     * found, return <code>null</code>.
+     *
+     * @param throwable The exception type for which to find an ErrorPage
+     *
+     * @return the error page entry for the specified Java exception type,
+     *         if any; otherwise return {@code null}.
+     */
+    public ErrorPage findErrorPage(Throwable throwable);
 
 
     /**
@@ -1087,7 +1104,11 @@ public interface Context extends Container, ContextBind {
      * HTTP status code, if any; otherwise return <code>null</code>.
      *
      * @param status HTTP status code to look up
+     *
+     * @deprecated Unused. Will be removed in Tomcat 10.
+     *             Use {@link #findErrorPage(int)} instead.
      */
+    @Deprecated
     public String findStatusPage(int status);
 
 
@@ -1095,7 +1116,11 @@ public interface Context extends Container, ContextBind {
      * @return the set of HTTP status codes for which error pages have
      * been specified.  If none are specified, a zero-length array
      * is returned.
+     *
+     * @deprecated Unused. Will be removed in Tomcat 10.
+     *             Use {@link #findErrorPages()} instead.
      */
+    @Deprecated
     public int[] findStatusPages();
 
 
@@ -1790,4 +1815,52 @@ public interface Context extends Container, ContextBind {
      *         {@code false}
      */
     public boolean getDispatchersUseEncodedPaths();
+
+    /**
+     * Set the default request body encoding for this web application.
+     *
+     * @param encoding The default encoding
+     */
+    public void setRequestCharacterEncoding(String encoding);
+
+    /**
+     * Get the default request body encoding for this web application.
+     *
+     * @return The default request body encoding
+     */
+    public String getRequestCharacterEncoding();
+
+    /**
+     * Set the default response body encoding for this web application.
+     *
+     * @param encoding The default encoding
+     */
+    public void setResponseCharacterEncoding(String encoding);
+
+    /**
+     * Get the default response body encoding for this web application.
+     *
+     * @return The default response body encoding
+     */
+    public String getResponseCharacterEncoding();
+
+    /**
+     * Configure if, when returning a context path from {@link
+     * javax.servlet.http.HttpServletRequest#getContextPath()}, the return value
+     * is allowed to contain multiple leading '/' characters.
+     *
+     * @param allowMultipleLeadingForwardSlashInPath The new value for the flag
+     */
+    public void setAllowMultipleLeadingForwardSlashInPath(
+            boolean allowMultipleLeadingForwardSlashInPath);
+
+    /**
+     * When returning a context path from {@link
+     * javax.servlet.http.HttpServletRequest#getContextPath()}, is it allowed to
+     * contain multiple leading '/' characters?
+     *
+     * @return <code>true</code> if multiple leading '/' characters are allowed,
+     *         otherwise <code>false</code>
+     */
+    public boolean getAllowMultipleLeadingForwardSlashInPath();
 }

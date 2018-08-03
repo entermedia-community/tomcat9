@@ -18,6 +18,7 @@ package org.apache.tomcat.util.net.jsse;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.security.Key;
 import java.security.KeyManagementException;
 import java.security.KeyStore;
 import java.security.NoSuchAlgorithmException;
@@ -96,13 +97,14 @@ public class JSSEUtil extends SSLUtilBase {
         String[] implementedProtocolsArray = context.getSupportedSSLParameters().getProtocols();
         implementedProtocols = new HashSet<>(implementedProtocolsArray.length);
 
-        // Filter out all the SSL protocols (SSLv2 and SSLv3) from the list of
-        // implemented protocols since they are no longer considered secure but
-        // allow SSLv2Hello. This has the effect of making it impossible to use
-        // SSLv2 or SSLv3 without source code changes.
+        // Filter out SSLv2 from the list of implemented protocols (just in case
+        // we are running on a JVM that supports it) since it is no longer
+        // considered secure but allow SSLv2Hello.
+        // Note SSLv3 is allowed despite known insecurities because some users
+        // still have a requirement for it.
         for (String protocol : implementedProtocolsArray) {
             String protocolUpper = protocol.toUpperCase(Locale.ENGLISH);
-            if (!"SSLV2HELLO".equals(protocolUpper)) {
+            if (!"SSLV2HELLO".equals(protocolUpper) && !"SSLV3".equals(protocolUpper)) {
                 if (protocolUpper.contains("SSL")) {
                     log.debug(sm.getString("jsse.excludeProtocol", protocol));
                     continue;
@@ -170,7 +172,6 @@ public class JSSEUtil extends SSLUtilBase {
 
     @Override
     public KeyManager[] getKeyManagers() throws Exception {
-        String keystoreType = certificate.getCertificateKeystoreType();
         String keyAlias = certificate.getCertificateKeyAlias();
         String algorithm = sslHostConfig.getKeyManagerAlgorithm();
         String keyPass = certificate.getCertificateKeyPassword();
@@ -180,15 +181,27 @@ public class JSSEUtil extends SSLUtilBase {
             keyPass = certificate.getCertificateKeystorePassword();
         }
 
-        KeyManager[] kms = null;
-
         KeyStore ks = certificate.getCertificateKeystore();
+        KeyStore ksUsed = ks;
+
+        /*
+         * Use an in memory key store where possible.
+         * For PEM format keys and certificates, it allows them to be imported
+         * into the expected format.
+         * For Java key stores with PKCS8 encoded keys (e.g. JKS files), it
+         * enables Tomcat to handle the case where multiple keys exist in the
+         * key store, each with a different password. The KeyManagerFactory
+         * can't handle that so using an in memory key store with just the
+         * required key works around that.
+         * Other keys stores (hardware, MS, etc.) will be used as is.
+         */
+
+        char[] keyPassArray = keyPass.toCharArray();
 
         if (ks == null) {
-            // create an in-memory keystore and import the private key
-            // and the certificate chain from the PEM files
-            ks = KeyStore.getInstance("JKS");
-            ks.load(null, null);
+            if (certificate.getCertificateFile() == null) {
+                throw new IOException(sm.getString("jsse.noCertFile"));
+            }
 
             PEMFile privateKeyFile = new PEMFile(SSLHostConfig.adjustRelativePath
                     (certificate.getCertificateKeyFile() != null ? certificate.getCertificateKeyFile() : certificate.getCertificateFile()),
@@ -205,25 +218,61 @@ public class JSSEUtil extends SSLUtilBase {
             if (keyAlias == null) {
                 keyAlias = "tomcat";
             }
-            ks.setKeyEntry(keyAlias, privateKeyFile.getPrivateKey(), keyPass.toCharArray(), chain.toArray(new Certificate[chain.size()]));
+
+            // Switch to in-memory key store
+            ksUsed = KeyStore.getInstance("JKS");
+            ksUsed.load(null,  null);
+            ksUsed.setKeyEntry(keyAlias, privateKeyFile.getPrivateKey(), keyPass.toCharArray(),
+                    chain.toArray(new Certificate[chain.size()]));
+        } else {
+            if (keyAlias != null && !ks.isKeyEntry(keyAlias)) {
+                throw new IOException(sm.getString("jsse.alias_no_key_entry", keyAlias));
+            } else if (keyAlias == null) {
+                Enumeration<String> aliases = ks.aliases();
+                if (!aliases.hasMoreElements()) {
+                    throw new IOException(sm.getString("jsse.noKeys"));
+                }
+                while (aliases.hasMoreElements() && keyAlias == null) {
+                    keyAlias = aliases.nextElement();
+                    if (!ks.isKeyEntry(keyAlias)) {
+                        keyAlias = null;
+                    }
+                }
+                if (keyAlias == null) {
+                    throw new IOException(sm.getString("jsse.alias_no_key_entry", (Object) null));
+                }
+            }
+
+            Key k = ks.getKey(keyAlias, keyPassArray);
+            if (k != null && !"DKS".equalsIgnoreCase(certificate.getCertificateKeystoreType()) &&
+                    "PKCS#8".equalsIgnoreCase(k.getFormat())) {
+                // Switch to in-memory key store
+                String provider = certificate.getCertificateKeystoreProvider();
+                if (provider == null) {
+                    ksUsed = KeyStore.getInstance(certificate.getCertificateKeystoreType());
+                } else {
+                    ksUsed = KeyStore.getInstance(certificate.getCertificateKeystoreType(),
+                            provider);
+                }
+                ksUsed.load(null,  null);
+                ksUsed.setKeyEntry(keyAlias, k, keyPassArray, ks.getCertificateChain(keyAlias));
+            }
+            // Non-PKCS#8 key stores will use the original key store
         }
 
-        if (keyAlias != null && !ks.isKeyEntry(keyAlias)) {
-            throw new IOException(sm.getString("jsse.alias_no_key_entry", keyAlias));
-        }
 
         KeyManagerFactory kmf = KeyManagerFactory.getInstance(algorithm);
-        kmf.init(ks, keyPass.toCharArray());
+        kmf.init(ksUsed, keyPassArray);
 
-        kms = kmf.getKeyManagers();
-        if (kms == null) {
-            return kms;
-        }
+        KeyManager[] kms = kmf.getKeyManagers();
 
-        if (keyAlias != null) {
+        // Only need to filter keys by alias if there are key managers to filter
+        // and the original key store was used. The in memory key stores only
+        // have a single key so don't need filtering
+        if (kms != null && ksUsed == ks) {
             String alias = keyAlias;
             // JKS keystores always convert the alias name to lower case
-            if ("JKS".equals(keystoreType)) {
+            if ("JKS".equals(certificate.getCertificateKeystoreType())) {
                 alias = alias.toLowerCase(Locale.ENGLISH);
             }
             for(int i = 0; i < kms.length; i++) {
@@ -246,7 +295,7 @@ public class JSSEUtil extends SSLUtilBase {
                 throw new InstantiationException(sm.getString(
                         "jsse.invalidTrustManagerClassName", className));
              }
-             Object trustManagerObject = clazz.newInstance();
+             Object trustManagerObject = clazz.getConstructor().newInstance();
              TrustManager trustManager = (TrustManager) trustManagerObject;
              return new TrustManager[]{ trustManager };
         }
@@ -258,10 +307,11 @@ public class JSSEUtil extends SSLUtilBase {
             checkTrustStoreEntries(trustStore);
             String algorithm = sslHostConfig.getTruststoreAlgorithm();
             String crlf = sslHostConfig.getCertificateRevocationListFile();
+            boolean revocationEnabled = sslHostConfig.getRevocationEnabled();
 
             if ("PKIX".equalsIgnoreCase(algorithm)) {
                 TrustManagerFactory tmf = TrustManagerFactory.getInstance(algorithm);
-                CertPathParameters params = getParameters(crlf, trustStore);
+                CertPathParameters params = getParameters(crlf, trustStore, revocationEnabled);
                 ManagerFactoryParameters mfp = new CertPathTrustManagerParameters(params);
                 tmf.init(mfp);
                 tms = tmf.getTrustManagers();
@@ -272,7 +322,10 @@ public class JSSEUtil extends SSLUtilBase {
                 if (crlf != null && crlf.length() > 0) {
                     throw new CRLException(sm.getString("jsseUtil.noCrlSupport", algorithm));
                 }
-                log.warn(sm.getString("jsseUtil.noVerificationDepth"));
+                // Only warn if the attribute has been explicitly configured
+                if (sslHostConfig.isCertificateVerificationDepthConfigured()) {
+                    log.warn(sm.getString("jsseUtil.noVerificationDepth", algorithm));
+                }
             }
         }
 
@@ -324,10 +377,15 @@ public class JSSEUtil extends SSLUtilBase {
      *
      * @param crlf The path to the CRL file.
      * @param trustStore The configured TrustStore.
+     * @param revocationEnabled Should the JSSE provider perform revocation
+     *                          checks? Ignored if {@code crlf} is non-null.
+     *                          Configuration of revocation checks are expected
+     *                          to be via proprietary JSSE provider methods.
      * @return The parameters including the CRLs and TrustStore.
      * @throws Exception An error occurred
      */
-    protected CertPathParameters getParameters(String crlf, KeyStore trustStore) throws Exception {
+    protected CertPathParameters getParameters(String crlf, KeyStore trustStore,
+            boolean revocationEnabled) throws Exception {
 
         PKIXBuilderParameters xparams =
                 new PKIXBuilderParameters(trustStore, new X509CertSelector());
@@ -338,7 +396,7 @@ public class JSSEUtil extends SSLUtilBase {
             xparams.addCertStore(store);
             xparams.setRevocationEnabled(true);
         } else {
-            xparams.setRevocationEnabled(false);
+            xparams.setRevocationEnabled(revocationEnabled);
         }
         xparams.setMaxPathLength(sslHostConfig.getCertificateVerificationDepth());
         return xparams;

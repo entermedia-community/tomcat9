@@ -21,7 +21,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
-
+import java.util.Map;
 
 
 /**
@@ -33,8 +33,8 @@ public class ResourceBase implements Serializable, Injectable {
 
     private static final long serialVersionUID = 1L;
 
-    // ------------------------------------------------------------- Properties
 
+    // ------------------------------------------------------------- Properties
 
     /**
      * The description of this resource.
@@ -42,7 +42,7 @@ public class ResourceBase implements Serializable, Injectable {
     private String description = null;
 
     public String getDescription() {
-        return (this.description);
+        return this.description;
     }
 
     public void setDescription(String description) {
@@ -58,7 +58,7 @@ public class ResourceBase implements Serializable, Injectable {
 
     @Override
     public String getName() {
-        return (this.name);
+        return this.name;
     }
 
     public void setName(String name) {
@@ -72,7 +72,7 @@ public class ResourceBase implements Serializable, Injectable {
     private String type = null;
 
     public String getType() {
-        return (this.type);
+        return this.type;
     }
 
     public void setType(String type) {
@@ -80,10 +80,25 @@ public class ResourceBase implements Serializable, Injectable {
     }
 
 
+    private String lookupName = null;
+
+    public String getLookupName() {
+        return lookupName;
+    }
+
+    public void setLookupName(String lookupName) {
+        if (lookupName == null || lookupName.length() == 0) {
+            this.lookupName = null;
+            return;
+        }
+        this.lookupName = lookupName;
+    }
+
+
     /**
      * Holder for our configured properties.
      */
-    private final HashMap<String, Object> properties = new HashMap<>();
+    private final Map<String, Object> properties = new HashMap<>();
 
     /**
      * @param name The property name
@@ -136,14 +151,12 @@ public class ResourceBase implements Serializable, Injectable {
     public int hashCode() {
         final int prime = 31;
         int result = 1;
-        result = prime * result +
-                ((description == null) ? 0 : description.hashCode());
-        result = prime * result +
-                ((injectionTargets == null) ? 0 : injectionTargets.hashCode());
+        result = prime * result + ((description == null) ? 0 : description.hashCode());
+        result = prime * result + ((injectionTargets == null) ? 0 : injectionTargets.hashCode());
         result = prime * result + ((name == null) ? 0 : name.hashCode());
-        result = prime * result +
-                ((properties == null) ? 0 : properties.hashCode());
+        result = prime * result + ((properties == null) ? 0 : properties.hashCode());
         result = prime * result + ((type == null) ? 0 : type.hashCode());
+        result = prime * result + ((lookupName == null) ? 0 : lookupName.hashCode());
         return result;
     }
 
@@ -195,11 +208,16 @@ public class ResourceBase implements Serializable, Injectable {
         } else if (!type.equals(other.type)) {
             return false;
         }
+        if (lookupName == null) {
+            if (other.lookupName != null) {
+                return false;
+            }
+        } else if (!lookupName.equals(other.lookupName)) {
+            return false;
+        }
         return true;
     }
 
-
-    // -------------------------------------------------------- Package Methods
 
     /**
      * The NamingResources with which we are associated (if any).
@@ -207,7 +225,7 @@ public class ResourceBase implements Serializable, Injectable {
     private NamingResources resources = null;
 
     public NamingResources getNamingResources() {
-        return (this.resources);
+        return this.resources;
     }
 
     public void setNamingResources(NamingResources resources) {

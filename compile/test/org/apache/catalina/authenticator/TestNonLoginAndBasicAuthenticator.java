@@ -24,9 +24,7 @@ import java.util.Map;
 
 import javax.servlet.http.HttpServletResponse;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
-
+import org.junit.Assert;
 import org.junit.Test;
 
 import org.apache.catalina.Context;
@@ -307,7 +305,7 @@ public class TestNonLoginAndBasicAuthenticator extends TomcatBaseTest {
 
         // slightly paranoid verification
         boolean sameCookies = originalCookies.equals(cookies);
-        assertTrue(!sameCookies);
+        Assert.assertTrue(!sameCookies);
     }
 
     /*
@@ -369,11 +367,11 @@ public class TestNonLoginAndBasicAuthenticator extends TomcatBaseTest {
                 respHeaders);
 
         if (expectedRC != HttpServletResponse.SC_OK) {
-            assertEquals(expectedRC, rc);
-            assertTrue(bc.getLength() > 0);
+            Assert.assertEquals(expectedRC, rc);
+            Assert.assertTrue(bc.getLength() > 0);
         }
         else {
-            assertEquals("OK", bc.toString());
+            Assert.assertEquals("OK", bc.toString());
         }
     }
 
@@ -399,23 +397,23 @@ public class TestNonLoginAndBasicAuthenticator extends TomcatBaseTest {
                 respHeaders);
 
         if (expectedRC != HttpServletResponse.SC_OK) {
-            assertEquals(expectedRC, rc);
-            assertTrue(bc.getLength() > 0);
+            Assert.assertEquals(expectedRC, rc);
+            Assert.assertTrue(bc.getLength() > 0);
             if (expectedRC == HttpServletResponse.SC_UNAUTHORIZED) {
                 // The server should identify the acceptable method(s)
                 boolean methodFound = false;
                 List<String> authHeaders = respHeaders.get(SERVER_AUTH_HEADER);
                 for (String authHeader : authHeaders) {
-                    if (authHeader.indexOf(NICE_METHOD) > -1) {
+                    if (authHeader.contains(NICE_METHOD)) {
                         methodFound = true;
                         break;
                     }
                 }
-                assertTrue(methodFound);
+                Assert.assertTrue(methodFound);
             }
         }
         else {
-            assertEquals("OK", bc.toString());
+            Assert.assertEquals("OK", bc.toString());
             List<String> newCookies = respHeaders.get(SERVER_COOKIE_HEADER);
             if (newCookies != null) {
                 // harvest cookies whenever the server sends some new ones

@@ -18,13 +18,10 @@ package org.apache.coyote.http11;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.Arrays;
 
 import org.apache.coyote.ActionCode;
-import org.apache.coyote.OutputBuffer;
 import org.apache.coyote.Response;
-import org.apache.coyote.http11.filters.GzipOutputFilter;
-import org.apache.juli.logging.Log;
-import org.apache.juli.logging.LogFactory;
 import org.apache.tomcat.util.buf.ByteChunk;
 import org.apache.tomcat.util.buf.MessageBytes;
 import org.apache.tomcat.util.net.SocketWrapperBase;
@@ -36,7 +33,7 @@ import org.apache.tomcat.util.res.StringManager;
  * headers (once committed) and the response body. Note that buffering of the
  * response body happens at a higher level.
  */
-public class Http11OutputBuffer implements OutputBuffer {
+public class Http11OutputBuffer implements HttpOutputBuffer {
 
     // -------------------------------------------------------------- Variables
 
@@ -44,12 +41,6 @@ public class Http11OutputBuffer implements OutputBuffer {
      * The string manager for this package.
      */
     protected static final StringManager sm = StringManager.getManager(Http11OutputBuffer.class);
-
-
-    /**
-     * Logger.
-     */
-    private static final Log log = LogFactory.getLog(Http11OutputBuffer.class);
 
 
     // ----------------------------------------------------- Instance Variables
@@ -93,7 +84,7 @@ public class Http11OutputBuffer implements OutputBuffer {
     /**
      * Underlying output buffer.
      */
-    protected OutputBuffer outputStreamOutputBuffer;
+    protected HttpOutputBuffer outputStreamOutputBuffer;
 
 
     /**
@@ -134,10 +125,7 @@ public class Http11OutputBuffer implements OutputBuffer {
      */
     public void addFilter(OutputFilter filter) {
 
-        OutputFilter[] newFilterLibrary = new OutputFilter[filterLibrary.length + 1];
-        for (int i = 0; i < filterLibrary.length; i++) {
-            newFilterLibrary[i] = filterLibrary[i];
-        }
+        OutputFilter[] newFilterLibrary = Arrays.copyOf(filterLibrary, filterLibrary.length + 1);
         newFilterLibrary[filterLibrary.length] = filter;
         filterLibrary = newFilterLibrary;
 
@@ -213,38 +201,47 @@ public class Http11OutputBuffer implements OutputBuffer {
     }
 
 
-    // --------------------------------------------------------- Public Methods
+    // ----------------------------------------------- HttpOutputBuffer Methods
 
     /**
      * Flush the response.
      *
      * @throws IOException an underlying I/O error occurred
      */
+    @Override
     public void flush() throws IOException {
-        // go through the filters and if there is gzip filter
-        // invoke it to flush
-        for (int i = 0; i <= lastActiveFilter; i++) {
-            if (activeFilters[i] instanceof GzipOutputFilter) {
-                if (log.isDebugEnabled()) {
-                    log.debug("Flushing the gzip filter at position " + i +
-                            " of the filter chain...");
-                }
-                ((GzipOutputFilter) activeFilters[i]).flush();
-                break;
-            }
+        if (lastActiveFilter == -1) {
+            outputStreamOutputBuffer.flush();
+        } else {
+            activeFilters[lastActiveFilter].flush();
         }
-
-        // Flush the current buffer(s)
-        flushBuffer(isBlocking());
     }
 
+
+    @Override
+    public void end() throws IOException {
+        if (responseFinished) {
+            return;
+        }
+
+        if (lastActiveFilter == -1) {
+            outputStreamOutputBuffer.end();
+        } else {
+            activeFilters[lastActiveFilter].end();
+        }
+
+        responseFinished = true;
+    }
+
+
+    // --------------------------------------------------------- Public Methods
 
     /**
      * Reset the header buffer if an error occurs during the writing of the
      * headers so the error response can be written.
      */
     void resetHeaderBuffer() {
-        headerBuffer.position(0);
+        headerBuffer.position(0).limit(headerBuffer.capacity());
     }
 
 
@@ -272,30 +269,10 @@ public class Http11OutputBuffer implements OutputBuffer {
         // Recycle response object
         response.recycle();
         // Reset pointers
-        headerBuffer.position(0);
+        headerBuffer.position(0).limit(headerBuffer.capacity());
         lastActiveFilter = -1;
         responseFinished = false;
         byteCount = 0;
-    }
-
-
-    /**
-     * Finish writing the response.
-     *
-     * @throws IOException an underlying I/O error occurred
-     */
-    public void finishResponse() throws IOException {
-        if (responseFinished) {
-            return;
-        }
-
-        if (lastActiveFilter != -1) {
-            activeFilters[lastActiveFilter].end();
-        }
-
-        flushBuffer(true);
-
-        responseFinished = true;
     }
 
 
@@ -325,8 +302,11 @@ public class Http11OutputBuffer implements OutputBuffer {
         if (headerBuffer.position() > 0) {
             // Sending the response header buffer
             headerBuffer.flip();
-            socketWrapper.write(isBlocking(), headerBuffer);
-            headerBuffer.position(0).limit(headerBuffer.capacity());
+            try {
+                socketWrapper.write(isBlocking(), headerBuffer);
+            } finally {
+                headerBuffer.position(0).limit(headerBuffer.capacity());
+            }
         }
     }
 
@@ -523,28 +503,54 @@ public class Http11OutputBuffer implements OutputBuffer {
     }
 
 
+    boolean isChunking() {
+        for (int i = 0; i < lastActiveFilter; i++) {
+            if (activeFilters[i] == filterLibrary[Constants.CHUNKED_FILTER]) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+
     // ------------------------------------------ SocketOutputBuffer Inner Class
 
     /**
      * This class is an output buffer which will write data to a socket.
      */
-    protected class SocketOutputBuffer implements OutputBuffer {
+    protected class SocketOutputBuffer implements HttpOutputBuffer {
 
         /**
          * Write chunk.
          */
         @Override
         public int doWrite(ByteBuffer chunk) throws IOException {
-            int len = chunk.remaining();
-            socketWrapper.write(isBlocking(), chunk);
-            len -= chunk.remaining();
-            byteCount += len;
-            return len;
+            try {
+                int len = chunk.remaining();
+                socketWrapper.write(isBlocking(), chunk);
+                len -= chunk.remaining();
+                byteCount += len;
+                return len;
+            } catch (IOException ioe) {
+                response.action(ActionCode.CLOSE_NOW, ioe);
+                // Re-throw
+                throw ioe;
+            }
         }
 
         @Override
         public long getBytesWritten() {
             return byteCount;
+        }
+
+        @Override
+        public void end() throws IOException {
+            socketWrapper.flush(true);
+        }
+
+        @Override
+        public void flush() throws IOException {
+            socketWrapper.flush(isBlocking());
         }
     }
 }

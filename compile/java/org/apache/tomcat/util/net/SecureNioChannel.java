@@ -35,6 +35,7 @@ import javax.net.ssl.SSLException;
 import org.apache.juli.logging.Log;
 import org.apache.juli.logging.LogFactory;
 import org.apache.tomcat.util.buf.ByteBufferUtils;
+import org.apache.tomcat.util.compat.JreCompat;
 import org.apache.tomcat.util.net.TLSClientHelloExtractor.ExtractorResult;
 import org.apache.tomcat.util.net.openssl.ciphers.Cipher;
 import org.apache.tomcat.util.res.StringManager;
@@ -190,9 +191,14 @@ public class SecureNioChannel extends NioChannel  {
                     throw new IOException(sm.getString("channel.nio.ssl.notHandshaking"));
                 }
                 case FINISHED: {
-                    if (endpoint.hasNegotiableProtocols() && sslEngine instanceof SSLUtil.ProtocolInfo) {
-                        socketWrapper.setNegotiatedProtocol(
-                                ((SSLUtil.ProtocolInfo) sslEngine).getNegotiatedProtocol());
+                    if (endpoint.hasNegotiableProtocols()) {
+                        if (sslEngine instanceof SSLUtil.ProtocolInfo) {
+                            socketWrapper.setNegotiatedProtocol(
+                                    ((SSLUtil.ProtocolInfo) sslEngine).getNegotiatedProtocol());
+                        } else if (JreCompat.isJre9Available()) {
+                            socketWrapper.setNegotiatedProtocol(
+                                    JreCompat.getInstance().getApplicationProtocol(sslEngine));
+                        }
                     }
                     //we are complete if we have delivered the last package
                     handshakeComplete = !netOutBuffer.hasRemaining();
@@ -236,10 +242,8 @@ public class SecureNioChannel extends NioChannel  {
                     } else if ( handshake.getStatus() == Status.BUFFER_UNDERFLOW ){
                         //read more data, reregister for OP_READ
                         return SelectionKey.OP_READ;
-                    } else if (handshake.getStatus() == Status.BUFFER_OVERFLOW) {
-                        getBufHandler().configureReadBufferForWrite();
                     } else {
-                        throw new IOException(sm.getString("channel.nio.ssl.unexpectedStatusDuringWrap", handshakeStatus));
+                        throw new IOException(sm.getString("channel.nio.ssl.unexpectedStatusDuringWrap", handshake.getStatus()));
                     }//switch
                     break;
                 }
@@ -290,9 +294,12 @@ public class SecureNioChannel extends NioChannel  {
 
         String hostName = null;
         List<Cipher> clientRequestedCiphers = null;
+        List<String> clientRequestedApplicationProtocols = null;
         switch (extractor.getResult()) {
         case COMPLETE:
             hostName = extractor.getSNIValue();
+            clientRequestedApplicationProtocols =
+                    extractor.getClientRequestedApplicationProtocols();
             //$FALL-THROUGH$ to set the client requested ciphers
         case NOT_PRESENT:
             clientRequestedCiphers = extractor.getClientRequestedCiphers();
@@ -307,13 +314,20 @@ public class SecureNioChannel extends NioChannel  {
             hostName = endpoint.getDefaultSSLHostConfigName();
             clientRequestedCiphers = Collections.emptyList();
             break;
+        case NON_SECURE:
+            netOutBuffer.clear();
+            netOutBuffer.put(TLSClientHelloExtractor.USE_TLS_RESPONSE);
+            netOutBuffer.flip();
+            flushOutbound();
+            throw new IOException(sm.getString("channel.nio.ssl.foundHttp"));
         }
 
         if (log.isDebugEnabled()) {
-            log.debug(sm.getString("channel.nio.ssl.sniHostName", hostName));
+            log.debug(sm.getString("channel.nio.ssl.sniHostName", sc, hostName));
         }
 
-        sslEngine = endpoint.createSSLEngine(hostName, clientRequestedCiphers);
+        sslEngine = endpoint.createSSLEngine(hostName, clientRequestedCiphers,
+                clientRequestedApplicationProtocols);
 
         // Ensure the application buffers (which have to be created earlier) are
         // big enough.
@@ -385,8 +399,10 @@ public class SecureNioChannel extends NioChannel  {
                 }
             }
         } catch (IOException x) {
+            closeSilently();
             throw x;
         } catch (Exception cx) {
+            closeSilently();
             IOException x = new IOException(cx);
             throw x;
         } finally {
@@ -420,7 +436,7 @@ public class SecureNioChannel extends NioChannel  {
         //so we can clear it here.
         netOutBuffer.clear();
         //perform the wrap
-        getBufHandler().configureWriteBufferForWrite();
+        getBufHandler().configureWriteBufferForRead();
         SSLEngineResult result = sslEngine.wrap(getBufHandler().getWriteBuffer(), netOutBuffer);
         //prepare the results to be written
         netOutBuffer.flip();
@@ -516,14 +532,26 @@ public class SecureNioChannel extends NioChannel  {
     public void close(boolean force) throws IOException {
         try {
             close();
-        }finally {
-            if ( force || closed ) {
+        } finally {
+            if (force || closed) {
                 closed = true;
                 sc.socket().close();
                 sc.close();
             }
         }
     }
+
+
+    private void closeSilently() {
+        try {
+            close(true);
+        } catch (IOException ioe) {
+            // This is expected - swallowing the exception is the reason this
+            // method exists. Log at debug in case someone is interested.
+            log.debug(sm.getString("channel.nio.ssl.closeSilentError"), ioe);
+        }
+    }
+
 
     /**
      * Reads a sequence of bytes from this channel into the given buffer.
@@ -684,10 +712,4 @@ public class SecureNioChannel extends NioChannel  {
     public ByteBuffer getEmptyBuf() {
         return emptyBuf;
     }
-
-    @Override
-    public SocketChannel getIOChannel() {
-        return sc;
-    }
-
 }

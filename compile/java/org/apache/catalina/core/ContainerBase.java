@@ -23,11 +23,11 @@ import java.security.AccessController;
 import java.security.PrivilegedAction;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadFactory;
@@ -64,7 +64,9 @@ import org.apache.catalina.util.LifecycleMBeanBase;
 import org.apache.juli.logging.Log;
 import org.apache.juli.logging.LogFactory;
 import org.apache.tomcat.util.ExceptionUtils;
+import org.apache.tomcat.util.MultiThrowable;
 import org.apache.tomcat.util.res.StringManager;
+import org.apache.tomcat.util.threads.InlineExecutorService;
 
 
 /**
@@ -276,7 +278,7 @@ public abstract class ContainerBase extends LifecycleMBeanBase
      * children associated with this container.
      */
     private int startStopThreads = 1;
-    protected ThreadPoolExecutor startStopExecutor;
+    protected ExecutorService startStopExecutor;
 
 
     // ------------------------------------------------------------- Properties
@@ -309,14 +311,12 @@ public abstract class ContainerBase extends LifecycleMBeanBase
 
     @Override
     public void setStartStopThreads(int startStopThreads) {
+        int oldStartStopThreads = this.startStopThreads;
         this.startStopThreads = startStopThreads;
 
         // Use local copies to ensure thread safety
-        ThreadPoolExecutor executor = startStopExecutor;
-        if (executor != null) {
-            int newThreads = getStartStopThreadsInternal();
-            executor.setMaximumPoolSize(newThreads);
-            executor.setCorePoolSize(newThreads);
+        if (oldStartStopThreads != startStopThreads && startStopExecutor != null) {
+            reconfigureStartStopExecutor(getStartStopThreadsInternal());
         }
     }
 
@@ -354,12 +354,10 @@ public abstract class ContainerBase extends LifecycleMBeanBase
      */
     @Override
     public Log getLogger() {
-
         if (logger != null)
-            return (logger);
+            return logger;
         logger = LogFactory.getLog(getLogName());
-        return (logger);
-
+        return logger;
     }
 
 
@@ -484,9 +482,7 @@ public abstract class ContainerBase extends LifecycleMBeanBase
      */
     @Override
     public String getName() {
-
-        return (name);
-
+        return name;
     }
 
 
@@ -503,7 +499,9 @@ public abstract class ContainerBase extends LifecycleMBeanBase
      */
     @Override
     public void setName(String name) {
-
+        if (name == null) {
+            throw new IllegalArgumentException(sm.getString("containerBase.nullName"));
+        }
         String oldName = this.name;
         this.name = name;
         support.firePropertyChange("name", oldName, this.name);
@@ -517,9 +515,7 @@ public abstract class ContainerBase extends LifecycleMBeanBase
      * @return <code>true</code> if the children will be started
      */
     public boolean getStartChildren() {
-
-        return (startChildren);
-
+        return startChildren;
     }
 
 
@@ -543,9 +539,7 @@ public abstract class ContainerBase extends LifecycleMBeanBase
      */
     @Override
     public Container getParent() {
-
-        return (parent);
-
+        return parent;
     }
 
 
@@ -578,12 +572,11 @@ public abstract class ContainerBase extends LifecycleMBeanBase
     @Override
     public ClassLoader getParentClassLoader() {
         if (parentClassLoader != null)
-            return (parentClassLoader);
+            return parentClassLoader;
         if (parent != null) {
-            return (parent.getParentClassLoader());
+            return parent.getParentClassLoader();
         }
-        return (ClassLoader.getSystemClassLoader());
-
+        return ClassLoader.getSystemClassLoader();
     }
 
 
@@ -612,9 +605,7 @@ public abstract class ContainerBase extends LifecycleMBeanBase
      */
     @Override
     public Pipeline getPipeline() {
-
-        return (this.pipeline);
-
+        return this.pipeline;
     }
 
 
@@ -630,9 +621,9 @@ public abstract class ContainerBase extends LifecycleMBeanBase
         l.lock();
         try {
             if (realm != null)
-                return (realm);
+                return realm;
             if (parent != null)
-                return (parent.getRealm());
+                return parent.getRealm();
             return null;
         } finally {
             l.unlock();
@@ -893,14 +884,34 @@ public abstract class ContainerBase extends LifecycleMBeanBase
 
     @Override
     protected void initInternal() throws LifecycleException {
-        BlockingQueue<Runnable> startStopQueue = new LinkedBlockingQueue<>();
-        startStopExecutor = new ThreadPoolExecutor(
-                getStartStopThreadsInternal(),
-                getStartStopThreadsInternal(), 10, TimeUnit.SECONDS,
-                startStopQueue,
-                new StartStopThreadFactory(getName() + "-startStop-"));
-        startStopExecutor.allowCoreThreadTimeOut(true);
+        reconfigureStartStopExecutor(getStartStopThreadsInternal());
         super.initInternal();
+    }
+
+
+    /*
+     * Implementation note: If there is a demand for more control than this then
+     * it is likely that the best solution will be to reference an external
+     * executor.
+     */
+    private void reconfigureStartStopExecutor(int threads) {
+        if (threads == 1) {
+            if (!(startStopExecutor instanceof InlineExecutorService)) {
+                startStopExecutor = new InlineExecutorService();
+            }
+        } else {
+            if (startStopExecutor instanceof ThreadPoolExecutor) {
+                ((ThreadPoolExecutor) startStopExecutor).setMaximumPoolSize(threads);
+                ((ThreadPoolExecutor) startStopExecutor).setCorePoolSize(threads);
+            } else {
+                BlockingQueue<Runnable> startStopQueue = new LinkedBlockingQueue<>();
+                ThreadPoolExecutor tpe = new ThreadPoolExecutor(threads, threads, 10,
+                        TimeUnit.SECONDS, startStopQueue,
+                        new StartStopThreadFactory(getName() + "-startStop-"));
+                tpe.allowCoreThreadTimeOut(true);
+                startStopExecutor = tpe;
+            }
+        }
     }
 
 
@@ -933,31 +944,32 @@ public abstract class ContainerBase extends LifecycleMBeanBase
             results.add(startStopExecutor.submit(new StartChild(children[i])));
         }
 
-        boolean fail = false;
+        MultiThrowable multiThrowable = new MultiThrowable();
+
         for (Future<Void> result : results) {
             try {
                 result.get();
-            } catch (Exception e) {
+            } catch (Throwable e) {
                 log.error(sm.getString("containerBase.threadedStartFailed"), e);
-                fail = true;
+                multiThrowable.add(e);
             }
 
         }
-        if (fail) {
-            throw new LifecycleException(
-                    sm.getString("containerBase.threadedStartFailed"));
+        if (multiThrowable.size() > 0) {
+            throw new LifecycleException(sm.getString("containerBase.threadedStartFailed"),
+                    multiThrowable.getThrowable());
         }
 
         // Start the Valves in our pipeline (including the basic), if any
-        if (pipeline instanceof Lifecycle)
+        if (pipeline instanceof Lifecycle) {
             ((Lifecycle) pipeline).start();
+        }
 
 
         setState(LifecycleState.STARTING);
 
         // Start our thread
         threadStart();
-
     }
 
 
@@ -1264,11 +1276,9 @@ public abstract class ContainerBase extends LifecycleMBeanBase
 
     public ObjectName[] getChildren() {
         List<ObjectName> names = new ArrayList<>(children.size());
-        Iterator<Container>  it = children.values().iterator();
-        while (it.hasNext()) {
-            Object next = it.next();
+        for (Container next : children.values()) {
             if (next instanceof ContainerBase) {
-                names.add(((ContainerBase)next).getObjectName());
+                names.add(next.getObjectName());
             }
         }
         return names.toArray(new ObjectName[names.size()]);
@@ -1319,8 +1329,23 @@ public abstract class ContainerBase extends LifecycleMBeanBase
     }
 
 
-    // -------------------------------------- ContainerExecuteDelay Inner Class
+    @Override
+    public final String toString() {
+        StringBuilder sb = new StringBuilder();
+        Container parent = getParent();
+        if (parent != null) {
+            sb.append(parent.toString());
+            sb.append('.');
+        }
+        sb.append(this.getClass().getSimpleName());
+        sb.append('[');
+        sb.append(getName());
+        sb.append(']');
+        return sb.toString();
+    }
 
+
+    // -------------------------------------- ContainerExecuteDelay Inner Class
 
     /**
      * Private thread class to invoke the backgroundProcess method

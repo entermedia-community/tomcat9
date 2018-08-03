@@ -125,7 +125,7 @@ import org.apache.tomcat.util.res.StringManager;
  * or an instance where the specification cited differs from Best
  * Community Practice (BCP).
  * Such instances should be well-documented here.  Please email the
- * <a href="http://tomcat.apache.org/lists.html">Tomcat group</a>
+ * <a href="https://tomcat.apache.org/lists.html">Tomcat group</a>
  * with amendments.
  *
  * </p>
@@ -283,6 +283,13 @@ public final class CGIServlet extends HttpServlet {
     private final Hashtable<String,String> shellEnv = new Hashtable<>();
 
     /**
+     * Enable creation of script command line arguments from query-string.
+     * See https://tools.ietf.org/html/rfc3875#section-4.4
+     * 4.4.  The Script Command Line
+     */
+    private boolean enableCmdLineArguments = false;
+
+    /**
      * Sets instance variables.
      * <P>
      * Modified from Craig R. McClanahan's InvokerServlet
@@ -309,6 +316,17 @@ public final class CGIServlet extends HttpServlet {
 
         if (passShellEnvironment) {
             shellEnv.putAll(System.getenv());
+        }
+
+        Enumeration<String> e = config.getInitParameterNames();
+        while(e.hasMoreElements()) {
+            String initParamName = e.nextElement();
+            if (initParamName.startsWith("environment-variable-")) {
+                if (initParamName.length() == 21) {
+                    throw new ServletException(sm.getString("cgiServlet.emptyEnvVarName"));
+                }
+                shellEnv.put(initParamName.substring(21), config.getInitParameter(initParamName));
+            }
         }
 
         if (getServletConfig().getInitParameter("executable") != null) {
@@ -340,6 +358,11 @@ public final class CGIServlet extends HttpServlet {
         if (getServletConfig().getInitParameter("envHttpHeaders") != null) {
             envHttpHeadersPattern =
                     Pattern.compile(getServletConfig().getInitParameter("envHttpHeaders"));
+        }
+
+        if (getServletConfig().getInitParameter("enableCmdLineArguments") != null) {
+            enableCmdLineArguments =
+                    Boolean.parseBoolean(config.getInitParameter("enableCmdLineArguments"));
         }
     }
 
@@ -670,9 +693,8 @@ public final class CGIServlet extends HttpServlet {
             // does not contain an unencoded "=" this is an indexed query.
             // The parsed query string becomes the command line parameters
             // for the cgi command.
-            if (req.getMethod().equals("GET")
-                || req.getMethod().equals("POST")
-                || req.getMethod().equals("HEAD")) {
+            if (enableCmdLineArguments && (req.getMethod().equals("GET")
+                || req.getMethod().equals("POST") || req.getMethod().equals("HEAD"))) {
                 String qs;
                 if (isIncluded) {
                     qs = (String) req.getAttribute(
@@ -799,13 +821,10 @@ public final class CGIServlet extends HttpServlet {
             path = currentLocation.getAbsolutePath();
             name = currentLocation.getName();
 
-            if (".".equals(contextPath)) {
-                scriptname = servletPath;
+            if (servletPath.startsWith(cginame)) {
+                scriptname = contextPath + cginame;
             } else {
-                scriptname = contextPath + servletPath;
-            }
-            if (!servletPath.equals(cginame)) {
-                scriptname = scriptname + cginame;
+                scriptname = contextPath + servletPath + cginame;
             }
 
             if (log.isDebugEnabled()) {
@@ -1467,9 +1486,9 @@ public final class CGIServlet extends HttpServlet {
                 log.debug("envp: [" + env + "], command: [" + command + "]");
             }
 
-            if ((command.indexOf(File.separator + "." + File.separator) >= 0)
-                || (command.indexOf(File.separator + "..") >= 0)
-                || (command.indexOf(".." + File.separator) >= 0)) {
+            if ((command.contains(File.separator + "." + File.separator))
+                || (command.contains(File.separator + ".."))
+                || (command.contains(".." + File.separator))) {
                 throw new IOException(this.getClass().getName()
                                       + "Illegal Character in CGI command "
                                       + "path ('.' or '..') detected.  Not "
@@ -1630,7 +1649,7 @@ public final class CGIServlet extends HttpServlet {
                     try {
                         errReaderThread.join(stderrTimeout);
                     } catch (InterruptedException e) {
-                        log.warn(sm.getString("cgiServlet.runReaderInterupt"));                    }
+                        log.warn(sm.getString("cgiServlet.runReaderInterrupt"));                    }
                 }
                 if (proc != null){
                     proc.destroy();

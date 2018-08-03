@@ -16,42 +16,51 @@
  */
 package org.apache.coyote.http2;
 
+import java.io.File;
 import java.io.IOException;
+import java.util.Iterator;
 
 import org.apache.coyote.AbstractProcessor;
 import org.apache.coyote.ActionCode;
 import org.apache.coyote.Adapter;
 import org.apache.coyote.ContainerThreadMarker;
 import org.apache.coyote.ErrorState;
-import org.apache.coyote.PushToken;
+import org.apache.coyote.Request;
+import org.apache.coyote.Response;
+import org.apache.coyote.http11.filters.GzipOutputFilter;
 import org.apache.juli.logging.Log;
 import org.apache.juli.logging.LogFactory;
 import org.apache.tomcat.util.buf.ByteChunk;
+import org.apache.tomcat.util.http.FastHttpDateFormat;
+import org.apache.tomcat.util.http.MimeHeaders;
 import org.apache.tomcat.util.net.AbstractEndpoint.Handler.SocketState;
+import org.apache.tomcat.util.net.DispatchType;
+import org.apache.tomcat.util.net.SendfileState;
 import org.apache.tomcat.util.net.SocketEvent;
 import org.apache.tomcat.util.net.SocketWrapperBase;
 import org.apache.tomcat.util.res.StringManager;
 
-class StreamProcessor extends AbstractProcessor implements Runnable {
+class StreamProcessor extends AbstractProcessor {
 
     private static final Log log = LogFactory.getLog(StreamProcessor.class);
     private static final StringManager sm = StringManager.getManager(StreamProcessor.class);
 
     private final Http2UpgradeHandler handler;
     private final Stream stream;
+    private SendfileData sendfileData = null;
+    private SendfileState sendfileState = null;
 
 
-    StreamProcessor(Http2UpgradeHandler handler, Stream stream, Adapter adapter, SocketWrapperBase<?> socketWrapper) {
-        super(stream.getCoyoteRequest(), stream.getCoyoteResponse());
+    StreamProcessor(Http2UpgradeHandler handler, Stream stream, Adapter adapter,
+            SocketWrapperBase<?> socketWrapper) {
+        super(adapter, stream.getCoyoteRequest(), stream.getCoyoteResponse());
         this.handler = handler;
         this.stream = stream;
-        setAdapter(adapter);
         setSocketWrapper(socketWrapper);
     }
 
 
-    @Override
-    public final void run() {
+    final void process(SocketEvent event) {
         try {
             // FIXME: the regular processor syncs on socketWrapper, but here this deadlocks
             synchronized (this) {
@@ -60,7 +69,7 @@ class StreamProcessor extends AbstractProcessor implements Runnable {
                 ContainerThreadMarker.set();
                 SocketState state = SocketState.CLOSED;
                 try {
-                    state = process(socketWrapper, SocketEvent.OPEN_READ);
+                    state = process(socketWrapper, event);
 
                     if (state == SocketState.CLOSED) {
                         if (!getErrorState().isConnectionIoAllowed()) {
@@ -95,13 +104,74 @@ class StreamProcessor extends AbstractProcessor implements Runnable {
     @Override
     protected final void prepareResponse() throws IOException {
         response.setCommitted(true);
+        if (handler.hasAsyncIO() && handler.getProtocol().getUseSendfile()) {
+            prepareSendfile();
+        }
+        prepareHeaders(request, response, sendfileData == null, handler.getProtocol(), stream);
         stream.writeHeaders();
+    }
+
+
+    private void prepareSendfile() {
+        String fileName = (String) stream.getCoyoteRequest().getAttribute(
+                org.apache.coyote.Constants.SENDFILE_FILENAME_ATTR);
+        if (fileName != null) {
+            sendfileData = new SendfileData();
+            sendfileData.path = new File(fileName).toPath();
+            sendfileData.pos = ((Long) stream.getCoyoteRequest().getAttribute(
+                    org.apache.coyote.Constants.SENDFILE_FILE_START_ATTR)).longValue();
+            sendfileData.end = ((Long) stream.getCoyoteRequest().getAttribute(
+                    org.apache.coyote.Constants.SENDFILE_FILE_END_ATTR)).longValue();
+            sendfileData.left = sendfileData.end - sendfileData.pos;
+            sendfileData.stream = stream;
+        }
+    }
+
+
+    // Static so it can be used by Stream to build the MimeHeaders required for
+    // an ACK. For that use case coyoteRequest, protocol and stream will be null.
+    static void prepareHeaders(Request coyoteRequest, Response coyoteResponse, boolean noSendfile,
+            Http2Protocol protocol, Stream stream) {
+        MimeHeaders headers = coyoteResponse.getMimeHeaders();
+        int statusCode = coyoteResponse.getStatus();
+
+        // Add the pseudo header for status
+        headers.addValue(":status").setString(Integer.toString(statusCode));
+
+        // Check to see if a response body is present
+        if (!(statusCode < 200 || statusCode == 205 || statusCode == 304)) {
+            String contentType = coyoteResponse.getContentType();
+            if (contentType != null) {
+                headers.setValue("content-type").setString(contentType);
+            }
+            String contentLanguage = coyoteResponse.getContentLanguage();
+            if (contentLanguage != null) {
+                headers.setValue("content-language").setString(contentLanguage);
+            }
+        }
+
+        // Add date header unless it is an informational response or the
+        // application has already set one
+        if (statusCode >= 200 && headers.getValue("date") == null) {
+            headers.addValue("date").setString(FastHttpDateFormat.getCurrentDate());
+        }
+
+        // Compression can't be used with sendfile
+        if (noSendfile && protocol != null &&
+                protocol.useCompression(coyoteRequest, coyoteResponse)) {
+            // Enable compression. Headers will have been set. Need to configure
+            // output filter at this point.
+            stream.addOutputFilter(new GzipOutputFilter());
+        }
     }
 
 
     @Override
     protected final void finishResponse() throws IOException {
-        stream.getOutputBuffer().close();
+        sendfileState = handler.processSendfile(sendfileData);
+        if (!(sendfileState == SendfileState.PENDING)) {
+            stream.getOutputBuffer().end();
+        }
     }
 
 
@@ -119,7 +189,7 @@ class StreamProcessor extends AbstractProcessor implements Runnable {
 
     @Override
     protected final void flush() throws IOException {
-        stream.flushData();
+        stream.getOutputBuffer().flush();
     }
 
 
@@ -132,7 +202,11 @@ class StreamProcessor extends AbstractProcessor implements Runnable {
     @Override
     protected final void setRequestBody(ByteChunk body) {
         stream.getInputBuffer().insertReplayedBody(body);
-        stream.receivedEndOfStream();
+        try {
+            stream.receivedEndOfStream();
+        } catch (ConnectionException e) {
+            // Exception will not be thrown in this case
+        }
     }
 
 
@@ -151,6 +225,16 @@ class StreamProcessor extends AbstractProcessor implements Runnable {
 
 
     @Override
+    protected void processSocketEvent(SocketEvent event, boolean dispatch) {
+        if (dispatch) {
+            handler.processStreamOnContainerThread(this, event);
+        } else {
+            this.process(event);
+        }
+    }
+
+
+    @Override
     protected final boolean isRequestBodyFullyRead() {
         return stream.getInputBuffer().isRequestBodyFullyRead();
     }
@@ -164,13 +248,23 @@ class StreamProcessor extends AbstractProcessor implements Runnable {
 
     @Override
     protected final boolean isReady() {
-        return stream.getOutputBuffer().isReady();
+        return stream.isReady();
     }
 
 
     @Override
-    protected final void executeDispatches(SocketWrapperBase<?> wrapper) {
-        wrapper.getEndpoint().getExecutor().execute(this);
+    protected final void executeDispatches() {
+        Iterator<DispatchType> dispatches = getIteratorAndClearDispatches();
+        synchronized (this) {
+            /*
+             * TODO Check if this sync is necessary.
+             *      Compare with superclass that uses SocketWrapper
+             */
+            while (dispatches != null && dispatches.hasNext()) {
+                DispatchType dispatchType = dispatches.next();
+                processSocketEvent(dispatchType.getSocketStatus(), false);
+            }
+        }
     }
 
 
@@ -181,13 +275,25 @@ class StreamProcessor extends AbstractProcessor implements Runnable {
 
 
     @Override
-    protected final void doPush(PushToken pushToken) {
+    protected final void doPush(Request pushTarget) {
         try {
-            pushToken.setResult(stream.push(pushToken.getPushTarget()));
+            stream.push(pushTarget);
         } catch (IOException ioe) {
             setErrorState(ErrorState.CLOSE_CONNECTION_NOW, ioe);
             response.setErrorException(ioe);
         }
+    }
+
+
+    @Override
+    protected boolean isTrailerFieldsReady() {
+        return stream.isTrailerFieldsReady();
+    }
+
+
+    @Override
+    protected boolean isTrailerFieldsSupported() {
+        return stream.isTrailerFieldsSupported();
     }
 
 
@@ -197,7 +303,6 @@ class StreamProcessor extends AbstractProcessor implements Runnable {
         // Clear fields that can be cleared to aid GC and trigger NPEs if this
         // is reused
         setSocketWrapper(null);
-        setAdapter(null);
     }
 
 
@@ -225,7 +330,9 @@ class StreamProcessor extends AbstractProcessor implements Runnable {
             setErrorState(ErrorState.CLOSE_NOW, e);
         }
 
-        if (getErrorState().isError()) {
+        if (sendfileState == SendfileState.PENDING) {
+            return SocketState.SENDFILE;
+        } else if (getErrorState().isError()) {
             action(ActionCode.CLOSE, null);
             request.updateCounters();
             return SocketState.CLOSED;
@@ -241,7 +348,7 @@ class StreamProcessor extends AbstractProcessor implements Runnable {
 
     @Override
     protected final boolean flushBufferedWrite() throws IOException {
-        if (stream.getOutputBuffer().flush(false)) {
+        if (stream.flush(false)) {
             // The buffer wasn't fully flushed so re-register the
             // stream for write. Note this does not go via the
             // Response since the write registration state at
@@ -249,7 +356,7 @@ class StreamProcessor extends AbstractProcessor implements Runnable {
             // has been emptied then the code below will call
             // dispatch() which will enable the
             // Response to respond to this event.
-            if (stream.getOutputBuffer().isReady()) {
+            if (stream.isReady()) {
                 // Unexpected
                 throw new IllegalStateException();
             }

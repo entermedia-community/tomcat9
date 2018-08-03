@@ -17,6 +17,7 @@
 
 package org.apache.catalina.core;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
@@ -45,6 +46,7 @@ public class ApplicationServletRegistration
 
     private final Wrapper wrapper;
     private final Context context;
+    private ServletSecurityElement constraint;
 
     public ApplicationServletRegistration(Wrapper wrapper,
             Context context) {
@@ -159,6 +161,7 @@ public class ApplicationServletRegistration
                     getName(), context.getName()));
         }
 
+        this.constraint = constraint;
         return context.addServletSecurity(this, constraint);
     }
 
@@ -191,8 +194,13 @@ public class ApplicationServletRegistration
 
         for (String urlPattern : urlPatterns) {
             context.addServletMappingDecoded(
-                    UDecoder.URLDecode(urlPattern, "UTF-8"), wrapper.getName());
+                    UDecoder.URLDecode(urlPattern, StandardCharsets.UTF_8), wrapper.getName());
         }
+
+        if (constraint != null) {
+            context.addServletSecurity(this, constraint);
+        }
+
         return Collections.emptySet();
     }
 

@@ -23,7 +23,6 @@ import java.io.IOException;
 import java.io.UnsupportedEncodingException;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.Principal;
 import java.security.cert.X509Certificate;
@@ -49,11 +48,11 @@ import org.apache.catalina.connector.Request;
 import org.apache.catalina.connector.Response;
 import org.apache.catalina.util.LifecycleMBeanBase;
 import org.apache.catalina.util.SessionConfig;
+import org.apache.catalina.util.ToStringUtil;
 import org.apache.juli.logging.Log;
 import org.apache.juli.logging.LogFactory;
 import org.apache.tomcat.util.IntrospectionUtils;
 import org.apache.tomcat.util.buf.B2CConverter;
-import org.apache.tomcat.util.buf.HexUtils;
 import org.apache.tomcat.util.descriptor.web.SecurityCollection;
 import org.apache.tomcat.util.descriptor.web.SecurityConstraint;
 import org.apache.tomcat.util.res.StringManager;
@@ -190,9 +189,7 @@ public abstract class RealmBase extends LifecycleMBeanBase implements Realm {
      */
     @Override
     public Container getContainer() {
-
-        return (container);
-
+        return container;
     }
 
 
@@ -420,7 +417,7 @@ public abstract class RealmBase extends LifecycleMBeanBase implements Realm {
 
         if (log.isDebugEnabled()) {
             log.debug("Digest : " + clientDigest + " Username:" + username
-                    + " ClientSigest:" + clientDigest + " nonce:" + nonce
+                    + " ClientDigest:" + clientDigest + " nonce:" + nonce
                     + " nc:" + nc + " cnonce:" + cnonce + " qop:" + qop
                     + " realm:" + realm + "md5a2:" + md5a2
                     + " Server digest:" + serverDigest);
@@ -445,7 +442,7 @@ public abstract class RealmBase extends LifecycleMBeanBase implements Realm {
     public Principal authenticate(X509Certificate certs[]) {
 
         if ((certs == null) || (certs.length < 1))
-            return (null);
+            return null;
 
         // Check the validity of each certificate in the chain
         if (log.isDebugEnabled())
@@ -460,14 +457,13 @@ public abstract class RealmBase extends LifecycleMBeanBase implements Realm {
                 } catch (Exception e) {
                     if (log.isDebugEnabled())
                         log.debug("  Validity exception", e);
-                    return (null);
+                    return null;
                 }
             }
         }
 
         // Check the existence of the client Principal in our database
-        return (getPrincipal(certs[0]));
-
+        return getPrincipal(certs[0]);
     }
 
 
@@ -475,7 +471,7 @@ public abstract class RealmBase extends LifecycleMBeanBase implements Realm {
      * {@inheritDoc}
      */
     @Override
-    public Principal authenticate(GSSContext gssContext, boolean storeCred) {
+    public Principal authenticate(GSSContext gssContext, boolean storeCreds) {
         if (gssContext.isEstablished()) {
             GSSName gssName = null;
             try {
@@ -495,7 +491,7 @@ public abstract class RealmBase extends LifecycleMBeanBase implements Realm {
                     }
                 }
                 GSSCredential gssCredential = null;
-                if (storeCred && gssContext.getCredDelegState()) {
+                if (storeCreds && gssContext.getCredDelegState()) {
                     try {
                         gssCredential = gssContext.getDelegCred();
                     } catch (GSSException e) {
@@ -508,6 +504,8 @@ public abstract class RealmBase extends LifecycleMBeanBase implements Realm {
                 }
                 return getPrincipal(name, gssCredential);
             }
+        } else {
+            log.error(sm.getString("realmBase.gssContextNotEstablished"));
         }
 
         // Fail in all other cases
@@ -543,14 +541,14 @@ public abstract class RealmBase extends LifecycleMBeanBase implements Realm {
         if ((constraints == null) || (constraints.length == 0)) {
             if (log.isDebugEnabled())
                 log.debug("  No applicable constraints defined");
-            return (null);
+            return null;
         }
 
         // Check each defined security constraint
         String uri = request.getRequestPathMB().toString();
-        // Bug47080 - in rare cases this may be null
+        // Bug47080 - in rare cases this may be null or ""
         // Mapper treats as '/' do the same to prevent NPE
-        if (uri == null) {
+        if (uri == null || uri.length() == 0) {
             uri = "/";
         }
 
@@ -582,7 +580,8 @@ public abstract class RealmBase extends LifecycleMBeanBase implements Realm {
                 }
 
                 for(int k=0; k < patterns.length; k++) {
-                    if(uri.equals(patterns[k])) {
+                    // Exact match including special case for the context root.
+                    if(uri.equals(patterns[k]) || patterns[k].length() == 0 && uri.equals("/")) {
                         found = true;
                         if(collection[j].findMethod(method)) {
                             if(results == null) {
@@ -774,7 +773,7 @@ public abstract class RealmBase extends LifecycleMBeanBase implements Realm {
     }
 
     /**
-     * Convert an ArrayList to a SecurityContraint [].
+     * Convert an ArrayList to a SecurityConstraint [].
      */
     private SecurityConstraint [] resultsToArray(
             ArrayList<SecurityConstraint> results) {
@@ -908,32 +907,30 @@ public abstract class RealmBase extends LifecycleMBeanBase implements Realm {
 
 
     /**
-     * Return <code>true</code> if the specified Principal has the specified
-     * security role, within the context of this Realm; otherwise return
-     * <code>false</code>.  This method can be overridden by Realm
-     * implementations, but the default is adequate when an instance of
-     * <code>GenericPrincipal</code> is used to represent authenticated
-     * Principals from this Realm.
+     * {@inheritDoc}
      *
-     * @param principal Principal for whom the role is to be checked
-     * @param role Security role to be checked
+     * This method or {@link #hasRoleInternal(Principal,
+     * String)} can be overridden by Realm implementations, but the default is
+     * adequate when an instance of <code>GenericPrincipal</code> is used to
+     * represent authenticated Principals from this Realm.
      */
     @Override
     public boolean hasRole(Wrapper wrapper, Principal principal, String role) {
         // Check for a role alias defined in a <security-role-ref> element
         if (wrapper != null) {
             String realRole = wrapper.findSecurityReference(role);
-            if (realRole != null)
+            if (realRole != null) {
                 role = realRole;
+            }
         }
 
         // Should be overridden in JAASRealm - to avoid pretty inefficient conversions
-        if ((principal == null) || (role == null) ||
-            !(principal instanceof GenericPrincipal))
+        if (principal == null || role == null) {
             return false;
+        }
 
-        GenericPrincipal gp = (GenericPrincipal) principal;
-        boolean result = gp.hasRole(role);
+        boolean result = hasRoleInternal(principal, role);
+
         if (log.isDebugEnabled()) {
             String name = principal.getName();
             if (result)
@@ -941,8 +938,35 @@ public abstract class RealmBase extends LifecycleMBeanBase implements Realm {
             else
                 log.debug(sm.getString("realmBase.hasRoleFailure", name, role));
         }
-        return (result);
 
+        return result;
+    }
+
+
+    /**
+     * Check if the specified Principal has the specified
+     * security role, within the context of this Realm.
+     *
+     * This method or {@link #hasRoleInternal(Principal,
+     * String)} can be overridden by Realm implementations, but the default is
+     * adequate when an instance of <code>GenericPrincipal</code> is used to
+     * represent authenticated Principals from this Realm.
+     *
+     * @param principal Principal for whom the role is to be checked
+     * @param role Security role to be checked
+     *
+     * @return <code>true</code> if the specified Principal has the specified
+     *         security role, within the context of this Realm; otherwise return
+     *         <code>false</code>.
+     */
+    protected boolean hasRoleInternal(Principal principal, String role) {
+        // Should be overridden in JAASRealm - to avoid pretty inefficient conversions
+        if (!(principal instanceof GenericPrincipal)) {
+            return false;
+        }
+
+        GenericPrincipal gp = (GenericPrincipal) principal;
+        return gp.hasRole(role);
     }
 
 
@@ -1101,10 +1125,7 @@ public abstract class RealmBase extends LifecycleMBeanBase implements Realm {
      */
     @Override
     public String toString() {
-        StringBuilder sb = new StringBuilder("Realm[");
-        sb.append(getName());
-        sb.append(']');
-        return sb.toString();
+        return ToStringUtil.toString(this);
     }
 
 
@@ -1166,13 +1187,6 @@ public abstract class RealmBase extends LifecycleMBeanBase implements Realm {
 
 
     /**
-     * @return a short name for this Realm implementation, for use in
-     * log messages.
-     */
-    protected abstract String getName();
-
-
-    /**
      * Get the password for the specified user.
      * @param username The user name
      * @return the password associated with the given principal's user name.
@@ -1191,7 +1205,7 @@ public abstract class RealmBase extends LifecycleMBeanBase implements Realm {
         if(log.isDebugEnabled())
             log.debug(sm.getString("realmBase.gotX509Username", username));
 
-        return(getPrincipal(username));
+        return getPrincipal(username);
     }
 
 
@@ -1240,44 +1254,6 @@ public abstract class RealmBase extends LifecycleMBeanBase implements Realm {
 
 
     // --------------------------------------------------------- Static Methods
-
-    /**
-     * Digest password using the algorithm specified and convert the result to a
-     * corresponding hex string.
-     *
-     * @param credentials Password or other credentials to use in authenticating
-     *                    this username
-     * @param algorithm   Algorithm used to do the digest
-     * @param encoding    Character encoding of the string to digest
-     *
-     * @return The digested credentials as a hex string or the original plain
-     *         text credentials if an error occurs.
-     */
-    public static final String Digest(String credentials, String algorithm,
-                                      String encoding) {
-
-        try {
-            // Obtain a new message digest with "digest" encryption
-            MessageDigest md =
-                (MessageDigest) MessageDigest.getInstance(algorithm).clone();
-
-            // encode the credentials
-            // Should use the digestEncoding, but that's not a static field
-            if (encoding == null) {
-                md.update(credentials.getBytes());
-            } else {
-                md.update(credentials.getBytes(encoding));
-            }
-
-            // Digest the credentials and return as hexadecimal
-            return (HexUtils.toHexString(md.digest()));
-        } catch(Exception ex) {
-            log.error(ex);
-            return credentials;
-        }
-
-    }
-
 
     /**
      * Generate a stored credential string for the given password and associated
@@ -1387,11 +1363,11 @@ public abstract class RealmBase extends LifecycleMBeanBase implements Realm {
         if (handlerClassName == null) {
             for (Class<? extends DigestCredentialHandlerBase> clazz : credentialHandlerClasses) {
                 try {
-                    handler = clazz.newInstance();
+                    handler = clazz.getConstructor().newInstance();
                     if (IntrospectionUtils.setProperty(handler, "algorithm", algorithm)) {
                         break;
                     }
-                } catch (InstantiationException | IllegalAccessException e) {
+                } catch (ReflectiveOperationException e) {
                     // This isn't good.
                     throw new RuntimeException(e);
                 }
@@ -1399,10 +1375,9 @@ public abstract class RealmBase extends LifecycleMBeanBase implements Realm {
         } else {
             try {
                 Class<?> clazz = Class.forName(handlerClassName);
-                handler = (DigestCredentialHandlerBase) clazz.newInstance();
+                handler = (DigestCredentialHandlerBase) clazz.getConstructor().newInstance();
                 IntrospectionUtils.setProperty(handler, "algorithm", algorithm);
-            } catch (InstantiationException | IllegalAccessException
-                    | ClassNotFoundException e) {
+            } catch (ReflectiveOperationException e) {
                 throw new RuntimeException(e);
             }
         }
@@ -1533,13 +1508,9 @@ public abstract class RealmBase extends LifecycleMBeanBase implements Realm {
         try {
             @SuppressWarnings("unchecked")
             Class<? extends X509UsernameRetriever> clazz = (Class<? extends X509UsernameRetriever>)Class.forName(className);
-            return clazz.newInstance();
-        } catch (ClassNotFoundException e) {
-            throw new LifecycleException(sm.getString("realmBase.createUsernameRetriever.ClassNotFoundException", className), e);
-        } catch (InstantiationException e) {
-            throw new LifecycleException(sm.getString("realmBase.createUsernameRetriever.InstantiationException", className), e);
-        } catch (IllegalAccessException e) {
-            throw new LifecycleException(sm.getString("realmBase.createUsernameRetriever.IllegalAccessException", className), e);
+            return clazz.getConstructor().newInstance();
+        } catch (ReflectiveOperationException e) {
+            throw new LifecycleException(sm.getString("realmBase.createUsernameRetriever.newInstance", className), e);
         } catch (ClassCastException e) {
             throw new LifecycleException(sm.getString("realmBase.createUsernameRetriever.ClassCastException", className), e);
         }

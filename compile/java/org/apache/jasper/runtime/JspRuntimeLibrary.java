@@ -29,12 +29,18 @@ import javax.servlet.ServletException;
 import javax.servlet.ServletRequest;
 import javax.servlet.ServletResponse;
 import javax.servlet.http.HttpServletRequest;
+import javax.servlet.jsp.JspException;
 import javax.servlet.jsp.JspWriter;
 import javax.servlet.jsp.PageContext;
 import javax.servlet.jsp.tagext.BodyContent;
+import javax.servlet.jsp.tagext.BodyTag;
+import javax.servlet.jsp.tagext.Tag;
 
 import org.apache.jasper.JasperException;
 import org.apache.jasper.compiler.Localizer;
+import org.apache.juli.logging.Log;
+import org.apache.juli.logging.LogFactory;
+import org.apache.tomcat.InstanceManager;
 
 /**
  * Bunch of util methods that are used by code generated for useBean,
@@ -481,7 +487,7 @@ public class JspRuntimeLibrary {
                 }
                 method.invoke (bean, new Object[] {tmpval});
             }
-        } catch (Exception ex) {
+        } catch (RuntimeException | ReflectiveOperationException ex) {
             Throwable thr = ExceptionUtils.unwrapInvocationTargetException(ex);
             ExceptionUtils.handleThrowable(thr);
             throw new JasperException ("error in invoking method", ex);
@@ -686,39 +692,26 @@ public class JspRuntimeLibrary {
         Method method = null;
         Class<?> type = null;
         try {
-            java.beans.BeanInfo info
-                = java.beans.Introspector.getBeanInfo(beanClass);
-            if ( info != null ) {
-                java.beans.PropertyDescriptor pd[]
-                    = info.getPropertyDescriptors();
-                for (int i = 0 ; i < pd.length ; i++) {
-                    if ( pd[i].getName().equals(prop) ) {
-                        method = pd[i].getWriteMethod();
-                        type   = pd[i].getPropertyType();
-                        break;
-                    }
+            java.beans.BeanInfo info = java.beans.Introspector.getBeanInfo(beanClass);
+            java.beans.PropertyDescriptor pd[] = info.getPropertyDescriptors();
+            for (int i = 0 ; i < pd.length ; i++) {
+                if ( pd[i].getName().equals(prop) ) {
+                    method = pd[i].getWriteMethod();
+                    type = pd[i].getPropertyType();
+                    break;
                 }
-            } else {
-                // just in case introspection silently fails.
-                throw new JasperException(
-                    Localizer.getMessage("jsp.error.beans.nobeaninfo",
-                                         beanClass.getName()));
             }
         } catch (Exception ex) {
             throw new JasperException (ex);
         }
         if (method == null) {
             if (type == null) {
-                throw new JasperException(
-                        Localizer.getMessage("jsp.error.beans.noproperty",
-                                             prop,
-                                             beanClass.getName()));
+                throw new JasperException(Localizer.getMessage(
+                        "jsp.error.beans.noproperty", prop, beanClass.getName()));
             } else {
-                throw new JasperException(
-                    Localizer.getMessage("jsp.error.beans.nomethod.setproperty",
-                                         prop,
-                                         type.getName(),
-                                         beanClass.getName()));
+                throw new JasperException(Localizer.getMessage(
+                        "jsp.error.beans.nomethod.setproperty",
+                        prop, type.getName(), beanClass.getName()));
             }
         }
         return method;
@@ -730,36 +723,25 @@ public class JspRuntimeLibrary {
         Method method = null;
         Class<?> type = null;
         try {
-            java.beans.BeanInfo info
-                = java.beans.Introspector.getBeanInfo(beanClass);
-            if ( info != null ) {
-                java.beans.PropertyDescriptor pd[]
-                    = info.getPropertyDescriptors();
-                for (int i = 0 ; i < pd.length ; i++) {
-                    if ( pd[i].getName().equals(prop) ) {
-                        method = pd[i].getReadMethod();
-                        type   = pd[i].getPropertyType();
-                        break;
-                    }
+            java.beans.BeanInfo info = java.beans.Introspector.getBeanInfo(beanClass);
+            java.beans.PropertyDescriptor pd[] = info.getPropertyDescriptors();
+            for (int i = 0 ; i < pd.length ; i++) {
+                if (pd[i].getName().equals(prop)) {
+                    method = pd[i].getReadMethod();
+                    type = pd[i].getPropertyType();
+                    break;
                 }
-            } else {
-                // just in case introspection silently fails.
-                throw new JasperException(
-                    Localizer.getMessage("jsp.error.beans.nobeaninfo",
-                                         beanClass.getName()));
             }
         } catch (Exception ex) {
             throw new JasperException (ex);
         }
         if (method == null) {
             if (type == null) {
-                throw new JasperException(
-                    Localizer.getMessage("jsp.error.beans.noproperty", prop,
-                                         beanClass.getName()));
+                throw new JasperException(Localizer.getMessage(
+                        "jsp.error.beans.noproperty", prop, beanClass.getName()));
             } else {
-                throw new JasperException(
-                    Localizer.getMessage("jsp.error.beans.nomethod", prop,
-                                         beanClass.getName()));
+                throw new JasperException(Localizer.getMessage(
+                        "jsp.error.beans.nomethod", prop, beanClass.getName()));
             }
         }
 
@@ -775,8 +757,7 @@ public class JspRuntimeLibrary {
         throws JasperException
     {
         try {
-            PropertyEditor pe =
-                (PropertyEditor)propertyEditorClass.newInstance();
+            PropertyEditor pe = (PropertyEditor)propertyEditorClass.getConstructor().newInstance();
             pe.setAsText(attrValue);
             return pe.getValue();
         } catch (Exception ex) {
@@ -827,9 +808,9 @@ public class JspRuntimeLibrary {
                                                 String relativePath) {
 
         if (relativePath.startsWith("/"))
-            return (relativePath);
+            return relativePath;
         if (!(request instanceof HttpServletRequest))
-            return (relativePath);
+            return relativePath;
         HttpServletRequest hrequest = (HttpServletRequest) request;
         String uri = (String) request.getAttribute(
                 RequestDispatcher.INCLUDE_SERVLET_PATH);
@@ -963,4 +944,42 @@ public class JspRuntimeLibrary {
         return false;
     }
 
+
+    public static JspWriter startBufferedBody(PageContext pageContext, BodyTag tag)
+            throws JspException {
+        BodyContent out = pageContext.pushBody();
+        tag.setBodyContent(out);
+        tag.doInitBody();
+        return out;
+    }
+
+
+    public static void releaseTag(Tag tag, InstanceManager instanceManager, boolean reused) {
+        // Caller ensures pool is non-null if reuse is true
+        if (!reused) {
+            releaseTag(tag, instanceManager);
+        }
+    }
+
+
+    protected static void releaseTag(Tag tag, InstanceManager instanceManager) {
+        try {
+            tag.release();
+        } catch (Throwable t) {
+            ExceptionUtils.handleThrowable(t);
+            Log log = LogFactory.getLog(JspRuntimeLibrary.class);
+            log.warn("Error processing release on tag instance of "
+                    + tag.getClass().getName(), t);
+        }
+        try {
+            instanceManager.destroyInstance(tag);
+        } catch (Exception e) {
+            Throwable t = ExceptionUtils.unwrapInvocationTargetException(e);
+            ExceptionUtils.handleThrowable(t);
+            Log log = LogFactory.getLog(JspRuntimeLibrary.class);
+            log.warn("Error processing preDestroy on tag instance of "
+                    + tag.getClass().getName(), t);
+        }
+
+    }
 }

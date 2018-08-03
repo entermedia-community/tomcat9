@@ -26,6 +26,7 @@ import java.util.Iterator;
 
 import org.apache.tomcat.util.IntrospectionUtils;
 import org.apache.tomcat.util.descriptor.web.ResourceBase;
+import org.apache.tomcat.util.security.Escape;
 
 /**
  * StoreAppends generate really the xml tag elements
@@ -106,7 +107,7 @@ public class StoreAppender {
         aWriter.print("<");
         aWriter.print(tag);
         aWriter.print(">");
-        aWriter.print(convertStr(content));
+        aWriter.print(Escape.xml(content));
         aWriter.print("</");
         aWriter.print(tag);
         aWriter.println(">");
@@ -203,7 +204,7 @@ public class StoreAppender {
      * @param bean
      *            Bean whose properties are to be rendered as attributes,
      * @param desc
-     *            RegistryDescrpitor from this bean
+     *            RegistryDescriptor from this bean
      *
      * @exception Exception
      *                if an exception occurs while storing
@@ -277,7 +278,7 @@ public class StoreAppender {
      * @param writer PrintWriter to which we are storing
      * @param indent Indentation level
      * @param bean The current bean
-     * @param desc RegistryDescrpitor from this bean
+     * @param desc RegistryDescriptor from this bean
      * @param attributeName The attribute name to store
      * @param bean2 A default instance of the bean for comparison
      * @param value The attribute value
@@ -318,12 +319,10 @@ public class StoreAppender {
      *
      * @param bean The bean
      * @return an object from same class as bean parameter
-     * @throws InstantiationException Error creating a new instance
-     * @throws IllegalAccessException Another error occurred
+     * @throws ReflectiveOperationException Error creating a new instance
      */
-    public Object defaultInstance(Object bean) throws InstantiationException,
-            IllegalAccessException {
-        return bean.getClass().newInstance();
+    public Object defaultInstance(Object bean) throws ReflectiveOperationException {
+        return bean.getClass().getConstructor().newInstance();
     }
 
     /**
@@ -343,7 +342,7 @@ public class StoreAppender {
         if (!(value instanceof String)) {
             value = value.toString();
         }
-        String strValue = convertStr((String) value);
+        String strValue = Escape.xml((String) value);
         pos = pos + name.length() + strValue.length();
         if (pos > 60) {
             writer.println();
@@ -357,34 +356,6 @@ public class StoreAppender {
         writer.print("\"");
     }
 
-    /**
-     * Given a string, this method replaces all occurrences of '&lt;', '&gt;',
-     * '&amp;', and '"'.
-     * @param input The string to escape
-     * @return the escaped string
-     */
-    public String convertStr(String input) {
-
-        StringBuffer filtered = new StringBuffer(input.length());
-        char c;
-        for (int i = 0; i < input.length(); i++) {
-            c = input.charAt(i);
-            if (c == '<') {
-                filtered.append("&lt;");
-            } else if (c == '>') {
-                filtered.append("&gt;");
-            } else if (c == '\'') {
-                filtered.append("&apos;");
-            } else if (c == '"') {
-                filtered.append("&quot;");
-            } else if (c == '&') {
-                filtered.append("&amp;");
-            } else {
-                filtered.append(c);
-            }
-        }
-        return (filtered.toString());
-    }
 
     /**
      * Is the specified property type one for which we should generate a

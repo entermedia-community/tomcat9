@@ -20,15 +20,14 @@ package org.apache.jasper.compiler;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.FilePermission;
-import java.io.UnsupportedEncodingException;
+import java.io.IOException;
+import java.net.URISyntaxException;
 import java.net.URL;
 import java.net.URLClassLoader;
-import java.net.URLDecoder;
 import java.security.CodeSource;
 import java.security.PermissionCollection;
 import java.security.Policy;
 import java.security.cert.Certificate;
-import java.util.Iterator;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -62,7 +61,7 @@ public final class JspRuntimeContext {
     /**
      * Logger
      */
-    private final Log log = LogFactory.getLog(JspRuntimeContext.class);
+    private final Log log = LogFactory.getLog(JspRuntimeContext.class); // must not be static
 
     /**
      * Counts how many times the webapp's JSPs have been reloaded.
@@ -169,6 +168,14 @@ public final class JspRuntimeContext {
      * Keeps JSP pages ordered by last access.
      */
     private FastRemovalDequeue<JspServletWrapper> jspQueue = null;
+
+    /**
+     * Map of class name to associated source map. This is maintained here as
+     * multiple JSPs can depend on the same file (included JSP, tag file, etc.)
+     * so a web application scoped Map is required.
+     */
+    private final Map<String,SmapStratum> smaps = new ConcurrentHashMap<>();
+
 
     // ------------------------------------------------------ Public Methods
 
@@ -283,9 +290,8 @@ public final class JspRuntimeContext {
      * Process a "destroy" event for this web application context.
      */
     public void destroy() {
-        Iterator<JspServletWrapper> servlets = jsps.values().iterator();
-        while (servlets.hasNext()) {
-            servlets.next().destroy();
+        for (JspServletWrapper jspServletWrapper : jsps.values()) {
+            jspServletWrapper.destroy();
         }
     }
 
@@ -391,8 +397,12 @@ public final class JspRuntimeContext {
     }
 
 
-    // -------------------------------------------------------- Private Methods
+    public Map<String,SmapStratum> getSmaps() {
+        return smaps;
+    }
 
+
+    // -------------------------------------------------------- Private Methods
 
     /**
      * Method used to initialize classpath for compiles.
@@ -414,10 +424,10 @@ public final class JspRuntimeContext {
                     try {
                         // Need to decode the URL, primarily to convert %20
                         // sequences back to spaces
-                        String decoded = URLDecoder.decode(urls[i].getPath(), "UTF-8");
+                        String decoded = urls[i].toURI().getPath();
                         cpath.append(decoded + File.pathSeparator);
-                    } catch (UnsupportedEncodingException e) {
-                        // All JREs are required to support UTF-8
+                    } catch (URISyntaxException e) {
+                        log.warn(Localizer.getMessage("jsp.warning.classpathUrl"), e);
                     }
                 }
             }
@@ -507,7 +517,7 @@ public final class JspRuntimeContext {
                 // Allow the JSP to access org.apache.jasper.runtime.HttpJspBase
                 permissions.add( new RuntimePermission(
                     "accessClassInPackage.org.apache.jasper.runtime") );
-            } catch(Exception e) {
+            } catch(RuntimeException | IOException e) {
                 context.log("Security Init for context failed",e);
             }
         }

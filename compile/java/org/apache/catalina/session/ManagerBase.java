@@ -25,7 +25,6 @@ import java.util.Date;
 import java.util.Deque;
 import java.util.Enumeration;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
@@ -47,6 +46,7 @@ import org.apache.catalina.SessionIdGenerator;
 import org.apache.catalina.util.LifecycleMBeanBase;
 import org.apache.catalina.util.SessionIdGeneratorBase;
 import org.apache.catalina.util.StandardSessionIdGenerator;
+import org.apache.catalina.util.ToStringUtil;
 import org.apache.juli.logging.Log;
 import org.apache.juli.logging.LogFactory;
 import org.apache.tomcat.util.res.StringManager;
@@ -171,7 +171,7 @@ public abstract class ManagerBase extends LifecycleMBeanBase implements Manager 
     /**
      * Frequency of the session expiration, and related manager operations.
      * Manager operations will be done once for the specified amount of
-     * backgrondProcess calls (ie, the lower the amount, the most often the
+     * backgroundProcess calls (ie, the lower the amount, the most often the
      * checks will occur).
      */
     protected int processExpiresFrequency = 6;
@@ -193,6 +193,10 @@ public abstract class ManagerBase extends LifecycleMBeanBase implements Manager 
 
     private boolean warnOnSessionAttributeFilterFailure;
 
+    private boolean notifyBindingListenerOnUnchangedValue;
+
+    private boolean notifyAttributeListenerOnUnchangedValue = true;
+
 
     // ------------------------------------------------------------ Constructors
 
@@ -208,6 +212,31 @@ public abstract class ManagerBase extends LifecycleMBeanBase implements Manager 
 
 
     // -------------------------------------------------------------- Properties
+
+    @Override
+    public boolean getNotifyAttributeListenerOnUnchangedValue() {
+        return notifyAttributeListenerOnUnchangedValue;
+    }
+
+
+
+    @Override
+    public void setNotifyAttributeListenerOnUnchangedValue(boolean notifyAttributeListenerOnUnchangedValue) {
+        this.notifyAttributeListenerOnUnchangedValue = notifyAttributeListenerOnUnchangedValue;
+    }
+
+
+    @Override
+    public boolean getNotifyBindingListenerOnUnchangedValue() {
+        return notifyBindingListenerOnUnchangedValue;
+    }
+
+
+    @Override
+    public void setNotifyBindingListenerOnUnchangedValue(boolean notifyBindingListenerOnUnchangedValue) {
+        this.notifyBindingListenerOnUnchangedValue = notifyBindingListenerOnUnchangedValue;
+    }
+
 
     /**
      * Obtain the regular expression used to filter session attribute based on
@@ -377,11 +406,9 @@ public abstract class ManagerBase extends LifecycleMBeanBase implements Manager 
             return sessionIdGenerator;
         } else if (sessionIdGeneratorClass != null) {
             try {
-                sessionIdGenerator = sessionIdGeneratorClass.newInstance();
+                sessionIdGenerator = sessionIdGeneratorClass.getConstructor().newInstance();
                 return sessionIdGenerator;
-            } catch(IllegalAccessException ex) {
-                // Ignore
-            } catch(InstantiationException ex) {
+            } catch(ReflectiveOperationException ex) {
                 // Ignore
             }
         }
@@ -400,18 +427,14 @@ public abstract class ManagerBase extends LifecycleMBeanBase implements Manager 
      * @return The descriptive short name of this Manager implementation.
      */
     public String getName() {
-
-        return (name);
-
+        return name;
     }
 
     /**
      * @return The secure random number generator class name.
      */
     public String getSecureRandomClass() {
-
-        return (this.secureRandomClass);
-
+        return this.secureRandomClass;
     }
 
 
@@ -499,9 +522,7 @@ public abstract class ManagerBase extends LifecycleMBeanBase implements Manager 
      * @return The frequency of manager checks.
      */
     public int getProcessExpiresFrequency() {
-
-        return (this.processExpiresFrequency);
-
+        return this.processExpiresFrequency;
     }
 
     /**
@@ -670,14 +691,13 @@ public abstract class ManagerBase extends LifecycleMBeanBase implements Manager 
             sessionCreationTiming.add(timing);
             sessionCreationTiming.poll();
         }
-        return (session);
-
+        return session;
     }
 
 
     @Override
     public Session createEmptySession() {
-        return (getNewSession());
+        return getNewSession();
     }
 
 
@@ -785,7 +805,7 @@ public abstract class ManagerBase extends LifecycleMBeanBase implements Manager 
                     value.getClass().getName()).matches()) {
                 if (getWarnOnSessionAttributeFilterFailure() || log.isDebugEnabled()) {
                     String msg = sm.getString("managerBase.sessionAttributeValueClassNameFilter",
-                            name, value.getClass().getName(), sessionAttributeNamePattern);
+                            name, value.getClass().getName(), sessionAttributeValueClassNamePattern);
                     if (getWarnOnSessionAttributeFilterFailure()) {
                         log.warn(msg);
                     } else {
@@ -921,9 +941,7 @@ public abstract class ManagerBase extends LifecycleMBeanBase implements Manager 
      *         limit.
      */
     public int getMaxActiveSessions() {
-
-        return (this.maxActiveSessions);
-
+        return this.maxActiveSessions;
     }
 
 
@@ -992,11 +1010,9 @@ public abstract class ManagerBase extends LifecycleMBeanBase implements Manager 
         // Init
         int counter = 0;
         int result = 0;
-        Iterator<SessionTiming> iter = copy.iterator();
 
         // Calculate average
-        while (iter.hasNext()) {
-            SessionTiming timing = iter.next();
+        for (SessionTiming timing : copy) {
             if (timing != null) {
                 int timeAlive = timing.getDuration();
                 counter++;
@@ -1052,11 +1068,9 @@ public abstract class ManagerBase extends LifecycleMBeanBase implements Manager 
         long oldest = now;
         int counter = 0;
         int result = 0;
-        Iterator<SessionTiming> iter = sessionTiming.iterator();
 
         // Calculate rate
-        while (iter.hasNext()) {
-            SessionTiming timing = iter.next();
+        for (SessionTiming timing : sessionTiming) {
             if (timing != null) {
                 counter++;
                 if (timing.getTimestamp() < oldest) {
@@ -1083,9 +1097,8 @@ public abstract class ManagerBase extends LifecycleMBeanBase implements Manager 
      */
     public String listSessionIds() {
         StringBuilder sb = new StringBuilder();
-        Iterator<String> keys = sessions.keySet().iterator();
-        while (keys.hasNext()) {
-            sb.append(keys.next()).append(" ");
+        for (String s : sessions.keySet()) {
+            sb.append(s).append(" ");
         }
         return sb.toString();
     }
@@ -1213,15 +1226,7 @@ public abstract class ManagerBase extends LifecycleMBeanBase implements Manager 
 
     @Override
     public String toString() {
-        StringBuilder sb = new StringBuilder(this.getClass().getName());
-        sb.append('[');
-        if (context == null) {
-            sb.append("Context is null");
-        } else {
-            sb.append(context.getName());
-        }
-        sb.append(']');
-        return sb.toString();
+        return ToStringUtil.toString(this, context);
     }
 
 

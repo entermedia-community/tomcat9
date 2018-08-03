@@ -113,10 +113,12 @@ public class SimpleServerAuthConfig implements ServerAuthConfig {
                     while (moduleClassName != null) {
                         try {
                             Class<?> clazz = Class.forName(moduleClassName);
-                            ServerAuthModule module = (ServerAuthModule) clazz.newInstance();
+                            ServerAuthModule module =
+                                    (ServerAuthModule) clazz.getConstructor().newInstance();
                             module.initialize(null, null, handler, mergedProperties);
                             modules.add(module);
-                        } catch (ClassNotFoundException | InstantiationException | IllegalAccessException e) {
+                        } catch (ReflectiveOperationException | IllegalArgumentException |
+                                SecurityException e) {
                             AuthException ae = new AuthException();
                             ae.initCause(e);
                             throw ae;

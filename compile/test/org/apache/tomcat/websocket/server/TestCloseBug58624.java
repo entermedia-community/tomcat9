@@ -89,7 +89,7 @@ public class TestCloseBug58624 extends WebSocketBaseTest {
     }
 
     @ClientEndpoint
-    public class Bug58624ClientEndpoint {
+    public static class Bug58624ClientEndpoint {
 
         private volatile Throwable t;
 
@@ -107,7 +107,7 @@ public class TestCloseBug58624 extends WebSocketBaseTest {
 
     public static class Bug58624ServerConfig extends WsContextListener {
 
-        public static String PATH = "/bug58624";
+        public static final String PATH = "/bug58624";
 
 
         @Override
