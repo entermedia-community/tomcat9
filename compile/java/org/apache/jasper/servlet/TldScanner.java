@@ -98,7 +98,9 @@ public class TldScanner {
      * @throws SAXException if there was a problem parsing a TLD
      */
     public void scan() throws IOException, SAXException {
-    	return;
+
+	//Cburkey: Takes too long to scan the entire WEB-INF folder    
+	return;
     	
 //        scanPlatform();
 //        scanJspConfig();
