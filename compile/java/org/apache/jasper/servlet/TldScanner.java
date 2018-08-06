@@ -102,6 +102,7 @@ public class TldScanner {
         scanJspConfig();
         //https://docs.oracle.com/javaee/1.4/tutorial/doc/
         //cburkey: Slows down the startup since /WEB-INF/data might be huge
+        //scanResourcePaths(WEB_INF);
         scanResourcePaths(WEB_INF + "tags/");
         scanJars();
     }
