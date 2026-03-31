@@ -4,4 +4,4 @@
 /outbin/
 .DS_Store
 compile/output/_build
-compile/output/build/*
+compile/output/*
