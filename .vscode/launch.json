@@ -1,0 +1,20 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+
+        {
+            "type": "java",
+            "name": "Attach to Tomcat",
+            "request": "attach",
+            "hostName": "localhost",
+            "port": 43599,
+            "sourcePaths": [
+                "/home/shanti/git/tomcat9/compile/java",
+                "/home/shanti/git/entermedia-core/src/java",
+                "/home/shanti/git/entermedia-server/src",
+                "/home/shanti/git/extension-openinstitute/serverside/src",
+                "/home/shanti/git/extension-openedit/src"
+            ]
+        }
+    ]
+}
