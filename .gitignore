@@ -2,6 +2,6 @@
 /bin/
 /bin2/
 /outbin/
+compile/
+.project
 .DS_Store
-compile/output/_build
-compile/output/*
